@@ -19,8 +19,15 @@ mkdir -p "$RUN" "$LOGS"
 
 valid() { [[ "${1:-}" =~ ^[0-9]{2,3}$ ]] || { echo "bad display: ${1:-}" >&2; exit 2; }; }
 up() { xdpyinfo -display ":$1" >/dev/null 2>&1; }
-# Each helper is found again by its exact arguments, so a second start is a no-op.
+# Each helper is found again by its exact command line, so a second start is a no-op. The patterns
+# are anchored at the start: an unanchored one also matches (and `stop` would kill) any other
+# process that merely mentions a helper in its arguments, such as a shell running a diagnostic.
 running() { pgrep -f -- "$1" >/dev/null 2>&1; }
+# One change at a time: two starts of the same display must not both find it down. The helpers that
+# stay running are each started as a plain background command with the lock's descriptor closed
+# (9>&-). Never write them as `test || helper &`: that backgrounds a shell which keeps the lock for
+# as long as the helper lives.
+locked() { ( flock 9; "$@" ) 9>"$RUN/lock"; }
 
 displays() {
   local lock n
@@ -34,34 +41,40 @@ displays() {
 vnc() {
   local n="$1"
   [ -s "$RUN/vncpass" ] || { echo "no VNC password yet (hq-display setpass)" >&2; return 1; }
-  running "x11vnc -display :$n " || \
+  if ! running "^x11vnc -display :$n "; then
     setsid x11vnc -display ":$n" -rfbport "$((5900 + n))" -rfbauth "$RUN/vncpass" -forever -shared \
-      -noxdamage -quiet >"$LOGS/vnc-$n.log" 2>&1 &
+      -noxdamage -quiet >"$LOGS/vnc-$n.log" 2>&1 9>&- &
+  fi
 }
 
 start() {
   local n="$1"
   if ! up "$n"; then
     rm -f "/tmp/.X$n-lock" "/tmp/.X11-unix/X$n"
-    setsid Xvfb ":$n" -screen 0 "${SIZE}x24" -nolisten tcp >"$LOGS/xvfb-$n.log" 2>&1 &
+    setsid Xvfb ":$n" -screen 0 "${SIZE}x24" -nolisten tcp >"$LOGS/xvfb-$n.log" 2>&1 9>&- &
     for _ in $(seq 1 50); do up "$n" && break; sleep 0.1; done
     up "$n" || { echo "display :$n did not start" >&2; exit 1; }
   fi
   # The window manager takes no display argument we could find it by, so it runs under a name of its own.
-  running "^hq-wm-$n " || \
-    DISPLAY=":$n" setsid bash -c "exec -a hq-wm-$n openbox --sm-disable" >"$LOGS/wm-$n.log" 2>&1 &
+  if ! running "^hq-wm-$n "; then
+    DISPLAY=":$n" setsid bash -c "exec -a hq-wm-$n openbox --sm-disable" >"$LOGS/wm-$n.log" 2>&1 9>&- &
+  fi
   vnc "$n" || exit 1
-  running "TCP-LISTEN:$((19200 + n))," || \
-    setsid socat "TCP-LISTEN:$((19200 + n)),fork,reuseaddr" "TCP:127.0.0.1:$((9200 + n))" >"$LOGS/cdp-$n.log" 2>&1 &
+  if ! running "^socat TCP-LISTEN:$((19200 + n)),"; then
+    setsid socat "TCP-LISTEN:$((19200 + n)),fork,reuseaddr" "TCP:127.0.0.1:$((9200 + n))" >"$LOGS/cdp-$n.log" 2>&1 9>&- &
+  fi
   echo "started $n"
 }
 
 stop() {
   local n="$1"
-  pkill -f -- "TCP-LISTEN:$((19200 + n))," 2>/dev/null
-  pkill -f -- "x11vnc -display :$n " 2>/dev/null
+  pkill -f -- "^socat TCP-LISTEN:$((19200 + n))," 2>/dev/null
+  pkill -f -- "^x11vnc -display :$n " 2>/dev/null
   pkill -f -- "^hq-wm-$n " 2>/dev/null
-  pkill -f -- "Xvfb :$n " 2>/dev/null
+  pkill -f -- "^Xvfb :$n " 2>/dev/null
+  # Gone for real before the next start looks: a dying X server still answers for a moment.
+  for _ in $(seq 1 50); do running "^Xvfb :$n " || break; sleep 0.1; done
+  running "^Xvfb :$n " && pkill -9 -f -- "^Xvfb :$n " 2>/dev/null
   rm -f "/tmp/.X$n-lock" "/tmp/.X11-unix/X$n"
   echo "stopped $n"
 }
@@ -80,8 +93,8 @@ setpass() {
   mv -f "$RUN/vncpass.new" "$RUN/vncpass"
   # Running VNC servers still hold the old password.
   for n in $(displays); do
-    pkill -f -- "x11vnc -display :$n " 2>/dev/null
-    for _ in $(seq 1 20); do running "x11vnc -display :$n " || break; sleep 0.1; done
+    pkill -f -- "^x11vnc -display :$n " 2>/dev/null
+    for _ in $(seq 1 20); do running "^x11vnc -display :$n " || break; sleep 0.1; done
     vnc "$n"
   done
   echo "changed"
@@ -98,13 +111,13 @@ list() {
 case "${1:-}" in
   serve)
     # After a restart nothing runs, but the password file is still there: bring the first screen back.
-    rm -f /tmp/.X*-lock
-    [ -s "$RUN/vncpass" ] && start 99
+    locked rm -f /tmp/.X*-lock
+    [ -s "$RUN/vncpass" ] && locked start 99
     exec sleep infinity
     ;;
-  setpass) setpass ;;
-  start) valid "${2:-}"; start "$2" ;;
-  stop)  valid "${2:-}"; stop "$2" ;;
+  setpass) locked setpass ;;
+  start) valid "${2:-}"; locked start "$2" ;;
+  stop)  valid "${2:-}"; locked stop "$2" ;;
   list)  list ;;
   *) echo "usage: hq-display serve | setpass | start <n> | stop <n> | list" >&2; exit 2 ;;
 esac

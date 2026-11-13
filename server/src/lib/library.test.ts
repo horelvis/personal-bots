@@ -17,7 +17,7 @@ const image = 'debian:bookworm-slim';
 const haveImage = spawnSync(docker, ['image', 'inspect', image], { stdio: 'ignore' }).status === 0;
 
 test('the library read script serves only regular files inside the library', { skip: !haveImage && 'no Docker runtime with debian:bookworm-slim' }, () => {
-  const cases = ['a.txt', 'sub/b.txt', 'inside-link', "odd 'name.txt", 'outside-link', 'dir-link/hostname', 'sibling-link/secret.txt', 'sub', 'missing.txt'];
+  const cases = ['a.txt', 'sub/b.txt', 'inside-link', "odd 'name.txt", 'outside-link', 'dir-link/hostname', 'sibling-link/secret.txt', 'sub', 'missing.txt', 'pipe'];
   const setup = [
     'set -e',
     'mkdir -p /lib/bot/sub /lib/other',
@@ -29,6 +29,7 @@ test('the library read script serves only regular files inside the library', { s
     'ln -s /etc/hostname /lib/bot/outside-link',
     'ln -s /etc /lib/bot/dir-link',
     'ln -s /lib/other /lib/bot/sibling-link',
+    'mkfifo /lib/bot/pipe',
     'set +e',
     `cat > /read.sh <<'HQ_EOF'\n${READ_FILE_SCRIPT}\nHQ_EOF`,
     ...cases.map((rel) => `printf '<<%s>>' "$(sh /read.sh /lib/bot ${JSON.stringify(rel).replace(/\$/g, '\\$')} 2>/dev/null | tr '\\n' '|')"; echo " rc=$?"`),
@@ -39,6 +40,6 @@ test('the library read script serves only regular files inside the library', { s
   // Served: "<size>|<bytes>". Refused: nothing at all on stdout.
   assert.deepEqual(lines.map((l) => l.replace(/ rc=\d+$/, '')), [
     '<<5|hello>>', '<<6|nested>>', '<<5|hello>>', '<<3|odd>>',
-    '<<>>', '<<>>', '<<>>', '<<>>', '<<>>',
+    '<<>>', '<<>>', '<<>>', '<<>>', '<<>>', '<<>>',
   ]);
 });

@@ -88,7 +88,7 @@ async function start(): Promise<boolean> {
   const tag = args[args.length - 1];
   const spec = specOf(args);
   let fresh = false;
-  const info = await docker(['inspect', '-f', '{{.State.Running}} {{index .Config.Labels "hq.spec"}}', name]);
+  const info = await docker(['inspect', '-f', '{{.State.Running}} {{index .Config.Labels "hq.spec"}} {{.State.StartedAt}}', name]);
   if (info.code === 127) throw new Error(`The docker command was not found (${env.dockerBin}). Install a Docker-compatible runtime, for example Colima.`);
   if (info.code !== 0 && /cannot connect|failed to connect|is the docker daemon running/i.test(info.stderr)) {
     throw new Error('Docker is not running. Start it (for example: colima start) and try again.');
@@ -116,6 +116,9 @@ async function start(): Promise<boolean> {
     const started = await docker(['start', name]);
     if (started.code !== 0) throw new Error(`Could not start the box: ${lastLine(started.stderr)}`);
     fresh = true;
+  } else if (state[2] !== startedAt) {
+    // It restarted without us (the runtime came back, or someone restarted it): its screens are bare again.
+    fresh = true;
   }
   // The password goes in on every start: a changed SESSION_SECRET then reaches the running VNC servers.
   let pass: Out = { code: 1, stdout: Buffer.alloc(0), stderr: '' };
@@ -126,8 +129,13 @@ async function start(): Promise<boolean> {
   if (pass.code !== 0) throw new Error(`Could not set up the box: ${lastLine(pass.stderr)}`);
   const first99 = await docker(['exec', name, 'hq-display', 'start', String(DEFAULT_DISPLAY)], { timeoutMs: 30_000 });
   if (first99.code !== 0) throw new Error(`The box started but its first screen did not come up: ${lastLine(first99.stderr)}`);
+  const now = await docker(['inspect', '-f', '{{.State.StartedAt}}', name]);
+  startedAt = now.code === 0 ? now.stdout.toString().trim() : null;
   return fresh;
 }
+
+/** When the container we last looked at was started; a different value means it restarted since. */
+let startedAt: string | null = null;
 
 let starting: Promise<boolean> | null = null;
 let checkedAt = 0;
@@ -216,7 +224,9 @@ export const dockerBox = {
       const child = spawn(env.dockerBin, ['exec', env.dockerContainer, 'sh', '-c', READ_FILE_SCRIPT, 'sh', root, rel], { stdio: ['ignore', 'pipe', 'ignore'] });
       let head = Buffer.alloc(0);
       let decided = false;
-      const refuse = () => { if (!decided) { decided = true; child.kill('SIGKILL'); resolve(null); } };
+      const refuse = () => { if (!decided) { decided = true; clearTimeout(timer); child.kill('SIGKILL'); resolve(null); } };
+      // The answer starts within moments or not at all; a command that hangs must not hold the request open.
+      const timer = setTimeout(refuse, 15_000);
       const onData = (d: Buffer) => {
         head = Buffer.concat([head, d]);
         const nl = head.indexOf(10);
@@ -225,6 +235,7 @@ export const dockerBox = {
         const size = Number(head.subarray(0, nl).toString());
         if (!/^\d+$/.test(head.subarray(0, nl).toString())) return refuse();
         decided = true;
+        clearTimeout(timer);
         child.stdout.off('data', onData);
         child.stdout.pause();
         child.stdout.unshift(head.subarray(nl + 1));
