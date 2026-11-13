@@ -21,7 +21,8 @@ browser ── HTTP + SSE ──► server ── POST /v1/responses ──► H
 | Screens | `server/src/computer.ts`, `desk.ts`, `box.ts`, `server/box/*` | One Orgo Linux computer; the primary Bot uses the default screen, every other Bot leases an Orgo screen (four per computer). `desk.ts` installs the scripts in `server/box/` under `/opt/hq` and calls them to dress a screen: wallpaper, dock, light theme, a Chrome with its own profile and DevTools port (9200 + display number), and a home screen as the new tab page. `box.ts` runs commands locally (`HQ_LOCAL=1`), in the local container (`HQ_BOX=docker`), or through Orgo's API |
 | Local box | `server/src/dockerbox.ts`, `server/box/docker/*` | With `HQ_BOX=docker`, one Linux container on the server's machine stands in for the Orgo computer: `hq-display` starts an X server, window manager, VNC server and DevTools forwarder per screen. The server builds the image, starts the container, and reaches it with `docker exec` and two published port ranges on `127.0.0.1` (VNC 59000+display, DevTools 9200+display). The VNC password goes in over stdin after start, and the container has its own network |
 | Viewer | `server/src/vnc.ts` | WebSocket relay between the browser (noVNC) and the screen's VNC server (Orgo's websockify, or a TCP socket to the local container). The server does the VNC auth, so the computer's password never reaches the browser. In *watch* mode, keyboard, pointer and clipboard messages are dropped on the server |
-| Apps | `server/src/composio.ts`, `triggers.ts` | Catalog, per-user sessions, connect links, tool execution, and triggers for event routines. Sign-in uses a Composio-managed Google connection |
+| Apps | `server/src/composio.ts`, `triggers.ts` | Optional (`COMPOSIO_API_KEY`). Catalog, per-user sessions, connect links, tool execution, and triggers for event routines. Without a key these are off and the rest of the app works |
+| Sign-in | `server/src/oauth/providers.ts`, `routes.ts` | OAuth with the operator's own client: one generic flow (`/api/auth/<provider>/start` and `/callback`, state kept in a cookie) over a registry of providers, each with its sign-in scopes and its services. Google is defined; without a Google client the older Composio-managed Gmail sign-in is used |
 | Scheduling | `server/src/routines.ts`, `proactive.ts` | Cron routines, event routines, and check-ins for the primary Bot. Each run is a turn |
 | Voice | `server/src/voice.ts`, `web/src/voice/*` | Mints short-lived xAI realtime client secrets; the browser connects to xAI directly. The voice agent hands real work to the Bot's turn queue and speaks the result. Also proxies TTS previews and dictation |
 | UI | `web/src` | React + zustand. Sidebar, chat with a "thinking" chip that follows the Bot's activity, details panel (screen preview, activity, tasks, Library, engine), settings, viewer, voice call bar |
@@ -79,5 +80,6 @@ Secrets live in `.env` on the server and in each Hermes home.
 |---|---|
 | Hermes Agent | The agent loop, tools, memory and model access for every Bot (API keys or subscription sign-ins) |
 | Orgo | The computer, its screens, VNC, and a public URL for the app |
-| Composio | Sign-in, connectors, triggers |
+| Composio | Optional: connectors, triggers, and sign-in when no OAuth client is configured |
+| Google (OAuth) | Optional: sign-in with your own OAuth client |
 | xAI | Research on X (`x_search`), realtime voice, TTS, dictation |

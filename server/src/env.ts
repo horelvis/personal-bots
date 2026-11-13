@@ -30,7 +30,8 @@ export const env = {
   serverUrl: process.env.SERVER_URL ?? `http://localhost:${process.env.PORT ?? 8787}`,
   xaiKey: req('XAI_API_KEY'),
   xaiModel: process.env.XAI_MODEL ?? 'grok-4.7',
-  composioKey: req('COMPOSIO_API_KEY'),
+  /** Optional: without it the app runs with connected apps and event routines switched off. */
+  composioKey: (process.env.COMPOSIO_API_KEY ?? '').trim(),
   /** Not needed when the screens run in a local container. */
   orgoKey: dockerBox ? '' : secret('ORGO_API_KEY'),
   sessionSecret: req('SESSION_SECRET'),

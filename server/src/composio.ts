@@ -4,10 +4,29 @@ import { db } from './db.js';
 import { env } from './env.js';
 import type { Toolkit } from './types.js';
 
-export const composio = new Composio({ apiKey: env.composioKey, provider: new OpenAIResponsesProvider() });
+/** Composio is optional. Without a key there are no connected apps, and everything else works. */
+export const composioEnabled = !!env.composioKey;
+
+export class ComposioUnavailable extends Error {
+  constructor() { super('Connected apps are not set up on this server (COMPOSIO_API_KEY is not set).'); }
+}
+
+const client = () => new Composio({ apiKey: env.composioKey, provider: new OpenAIResponsesProvider() });
+
+/** The Composio client. Without a key, touching it throws ComposioUnavailable instead of calling out with no credentials. */
+export const composio: ReturnType<typeof client> = composioEnabled
+  ? client()
+  : (new Proxy({}, { get() { throw new ComposioUnavailable(); } }) as ReturnType<typeof client>);
+
+/** Why a Composio call failed, short enough to show a person (their API wraps the reason a few levels deep). */
+export function composioReason(e: any): string {
+  const msg = e?.error?.error?.message ?? e?.error?.message ?? e?.message ?? String(e);
+  return String(msg).slice(0, 300);
+}
 
 const REST = 'https://backend.composio.dev/api/v3.1';
 async function rest<T = any>(path: string): Promise<T> {
+  if (!composioEnabled) throw new ComposioUnavailable();
   const res = await fetch(`${REST}${path}`, { headers: { 'x-api-key': env.composioKey } });
   if (!res.ok) throw new Error(`Composio ${path}: ${res.status} ${await res.text()}`);
   return res.json() as Promise<T>;
@@ -19,6 +38,7 @@ type CatalogItem = Omit<Toolkit, 'connected'>;
 let catalogCache: { at: number; items: CatalogItem[] } | null = null;
 
 export async function catalog(): Promise<CatalogItem[]> {
+  if (!composioEnabled) return [];
   if (catalogCache && Date.now() - catalogCache.at < 3600_000) return catalogCache.items;
   const items: CatalogItem[] = [];
   let cursor: string | undefined;
@@ -49,12 +69,14 @@ export async function toolkitInfo(slug: string): Promise<CatalogItem | undefined
 // ---------- per-user connections ----------
 
 export async function connectedToolkits(userId: string): Promise<Set<string>> {
+  if (!composioEnabled) return new Set();
   const r = await composio.connectedAccounts.list({ userIds: [userId], statuses: ['ACTIVE'] } as any);
   const items: any[] = (r as any).items ?? [];
   return new Set(items.map((i) => i.toolkit?.slug ?? i.toolkitSlug).filter(Boolean));
 }
 
 export async function connectionsDetail(userId: string) {
+  if (!composioEnabled) return [];
   const r = await composio.connectedAccounts.list({ userIds: [userId] } as any);
   return ((r as any).items ?? []).map((i: any) => ({ id: i.id, toolkit: i.toolkit?.slug ?? i.toolkitSlug, status: i.status }));
 }
@@ -95,6 +117,7 @@ export async function startConnect(userId: string, toolkit: string, callbackUrl:
 
 /** OpenAI-Responses-format function tools for this user's Composio session (meta tools). */
 export async function composioTools(userId: string): Promise<any[]> {
+  if (!composioEnabled) return [];
   try {
     const session = await sessionFor(userId);
     const tools = await session.tools();

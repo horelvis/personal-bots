@@ -143,6 +143,7 @@ export function ConnectAppsModal() {
 
   let body: React.ReactNode;
   if (error) body = <div className="apps-empty">Couldn’t load apps. {error}</div>;
+  else if (data?.available === false) body = <div className="apps-empty">Connected apps are not set up on this server.</div>;
   else if (!data && loading) body = <div className="apps-empty">Loading apps…</div>;
   else if (view.kind === 'connected') body = connectedApps.length ? <Section title="Connected" apps={connectedApps} onChanged={refresh} /> : <div className="apps-empty">No apps connected yet.</div>;
   else if (searching || view.kind === 'category') {

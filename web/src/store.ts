@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Bot, ComputerState, LiveState, Routine, Row, ServerEvent, User } from '@shared/types';
-import { api } from './lib/api';
+import { api, type SignInProvider } from './lib/api';
 
 export type ModalKind = 'create' | 'search' | 'apps' | 'group' | null;
 
@@ -9,6 +9,8 @@ interface Transcript { generation: number; bySeq: Record<number, Row>; loaded: b
 interface State {
   user: User | null;
   devLogin: boolean;
+  /** Providers the server can sign people in with. */
+  signInProviders: SignInProvider[];
   authChecked: boolean;
 
   bots: Bot[];
@@ -51,6 +53,7 @@ const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } ca
 export const useStore = create<State>((set, get) => ({
   user: null,
   devLogin: false,
+  signInProviders: [],
   authChecked: false,
   bots: [],
   live: {},
@@ -69,8 +72,8 @@ export const useStore = create<State>((set, get) => ({
 
   async checkAuth() {
     try {
-      const { user, devLogin } = await api.me();
-      set({ user, devLogin, authChecked: true });
+      const { user, devLogin, providers } = await api.me();
+      set({ user, devLogin, signInProviders: providers ?? [], authChecked: true });
     } catch {
       set({ user: null, authChecked: true });
     }

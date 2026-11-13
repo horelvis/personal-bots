@@ -4,13 +4,20 @@ import { api } from '../lib/api';
 import { useStore } from '../store';
 import { TrafficLights } from './Sidebar';
 
+const LOGIN_ERRORS: Record<string, string> = {
+  failed: 'Sign-in didn’t finish. Try again.',
+  'not-allowed': 'This account is not allowed to sign in here.',
+  unavailable: 'That sign-in method is not set up on this server.',
+};
+
 export function SignIn() {
   const devLogin = useStore((s) => s.devLogin);
+  const providers = useStore((s) => s.signInProviders);
   const checkAuth = useStore((s) => s.checkAuth);
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(() => (new URLSearchParams(location.search).get('login') === 'failed' ? 'Sign-in didn’t finish. Try again.' : null));
+  const [error, setError] = useState<string | null>(() => LOGIN_ERRORS[new URLSearchParams(location.search).get('login') ?? ''] ?? null);
 
   const dev = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,9 +35,12 @@ export function SignIn() {
         </div>
         <h1 className="signin__title">Grokbot</h1>
         <p className="signin__sub">AI teammates with their own computers. Hand them a task and they get it done.</p>
-        <a className="btn btn--primary signin__google" href="/api/auth/google/start">
-          <GoogleG /> Sign in with Google
-        </a>
+        {providers.map((p) => (
+          <a key={p.id} className="btn btn--primary signin__google" href={`/api/auth/${encodeURIComponent(p.id)}/start`}>
+            {p.id === 'google' && <GoogleG />} Sign in with {p.name}
+          </a>
+        ))}
+        {!providers.length && !devLogin && <p className="signin__sub">No sign-in method is set up on this server.</p>}
         {devLogin && (
           <form className="signin__dev" onSubmit={dev}>
             <div className="signin__divider"><span>Dev sign-in</span></div>

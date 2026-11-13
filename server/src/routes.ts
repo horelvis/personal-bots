@@ -13,7 +13,9 @@ import { dockerBox } from './dockerbox.js';
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { orgo } from './orgo.js';
-import { catalog, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
+import { catalog, composioEnabled, composioReason, ComposioUnavailable, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
+import { authUrl, configuredProviders, exchangeCode, fetchProfile, sameState, scopesFor } from './oauth/providers.js';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
 import { deleteEventTrigger } from './triggers.js';
 import { dispatchRoomMessage } from './agent/rooms.js';
@@ -63,21 +65,70 @@ function findOrCreateUser(email: string, name?: string, preferId?: string) {
 
 // ---------- auth ----------
 
+/** Providers set up with the operator's own OAuth client (see oauth/providers.ts). */
+const oauthProviders = configuredProviders(process.env);
+const oauthProvider = (id: string) => oauthProviders.find((p) => p.id === id);
+/** Google sign-in through a Composio-managed connection: the older way, used only when Google has no OAuth client of its own here. */
+const legacyGoogle = () => composioEnabled && !oauthProvider('google');
+const STATE_COOKIE = 'grokbot_oauth_state';
+const loginFailed = (c: any, why = 'failed') => c.redirect(`${env.appUrl}/?login=${why}`);
+
 api.get('/auth/me', (c) => {
   const user = userFromCookieHeader(c.req.header('cookie'));
-  return c.json({ user, devLogin: env.devLogin });
+  const providers = oauthProviders.map((p) => ({ id: p.id, name: p.name }));
+  if (legacyGoogle()) providers.unshift({ id: 'google', name: 'Google' });
+  return c.json({ user, devLogin: env.devLogin, providers, apps: composioEnabled });
+});
+
+// Sign-in with a provider's OAuth. The flow is the same for every provider in oauth/providers.ts:
+// the state travels in the URL and stays in a cookie, so only the browser that started can finish.
+api.get('/auth/:provider/start', async (c, next) => {
+  const p = oauthProvider(c.req.param('provider'));
+  if (!p) return next();
+  const state = crypto.randomBytes(24).toString('base64url');
+  setCookie(c, STATE_COOKIE, `${p.id}.${state}`, { httpOnly: true, sameSite: 'Lax', secure: env.serverUrl.startsWith('https:'), path: '/api/auth', maxAge: 600 });
+  return c.redirect(authUrl(p, { redirectUri: `${env.serverUrl}/api/auth/${p.id}/callback`, state: `${p.id}.${state}`, scopes: scopesFor(p, []) }));
+});
+
+api.get('/auth/:provider/callback', async (c, next) => {
+  const p = oauthProvider(c.req.param('provider'));
+  if (!p) return next();
+  const kept = getCookie(c, STATE_COOKIE);
+  deleteCookie(c, STATE_COOKIE, { path: '/api/auth' });
+  const code = c.req.query('code');
+  if (c.req.query('error') || !code || !sameState(kept, c.req.query('state'))) return loginFailed(c);
+  try {
+    const tokens = await exchangeCode(p, code, `${env.serverUrl}/api/auth/${p.id}/callback`);
+    const profile = await fetchProfile(p, tokens.accessToken);
+    if (!profile) return loginFailed(c);
+    // Sign-in needs only the profile, so the tokens are dropped here. Connecting one of the
+    // provider's services would keep them at this point instead.
+    const { id } = findOrCreateUser(profile.email, profile.name);
+    createSession(c, id);
+    return c.redirect(`${env.appUrl}/`);
+  } catch (e: any) {
+    console.error(`[auth] ${p.id} callback: ${e instanceof UserError ? e.message : e?.message ?? e}`);
+    return loginFailed(c, e instanceof UserError ? 'not-allowed' : 'failed');
+  }
 });
 
 api.get('/auth/google/start', async (c) => {
+  if (!legacyGoogle()) return loginFailed(c, 'unavailable');
   const attemptId = newId('login');
   const provisional = newId('usr');
   const cb = `${env.serverUrl}/api/auth/google/callback?attempt=${attemptId}`;
-  const { redirectUrl, connectedAccountId } = await startGoogleLogin(provisional, cb);
-  db.prepare('INSERT INTO login_attempts(id,provisional_user_id,connected_account_id,created_at) VALUES (?,?,?,?)').run(attemptId, provisional, connectedAccountId ?? null, now());
-  return c.redirect(redirectUrl);
+  try {
+    const { redirectUrl, connectedAccountId } = await startGoogleLogin(provisional, cb);
+    db.prepare('INSERT INTO login_attempts(id,provisional_user_id,connected_account_id,created_at) VALUES (?,?,?,?)').run(attemptId, provisional, connectedAccountId ?? null, now());
+    return c.redirect(redirectUrl);
+  } catch (e) {
+    console.error(`[auth] google start: ${composioReason(e)}`);
+    return loginFailed(c);
+  }
 });
 
 api.get('/auth/google/callback', async (c) => {
+  if (!legacyGoogle()) return loginFailed(c, 'unavailable');
   const attempt = db.prepare('SELECT * FROM login_attempts WHERE id=?').get(c.req.query('attempt') ?? '') as any;
   const caId = c.req.query('connected_account_id') ?? attempt?.connected_account_id;
   if (!attempt || c.req.query('status') === 'failed' || !caId) return c.redirect(`${env.appUrl}/?login=failed`);
@@ -404,17 +455,28 @@ api.get('/bots/:id/screenshot', async (c) => {
 
 // ---------- apps (Composio marketplace) ----------
 
+/** Connected apps are optional and depend on a service outside our control: say why they are not there. */
+const appsProblem = (c: any, e: any) =>
+  e instanceof ComposioUnavailable ? c.json({ error: e.message }, 409) : c.json({ error: `Connected apps are unavailable: ${composioReason(e)}` }, 502);
+
 api.get('/apps', async (c) => {
   const user = c.get('user');
   const search = (c.req.query('search') ?? '').toLowerCase();
   const category = c.req.query('category') ?? '';
-  const [all, connected] = await Promise.all([catalog(), connectedToolkits(user.id).catch(() => new Set<string>())]);
+  if (!composioEnabled) return c.json({ apps: [], connected: [], connectedApps: [], categories: [], total: 0, available: false });
+  let all: Awaited<ReturnType<typeof catalog>>;
+  let connected: Set<string>;
+  try {
+    [all, connected] = await Promise.all([catalog(), connectedToolkits(user.id).catch(() => new Set<string>())]);
+  } catch (e) {
+    return appsProblem(c, e);
+  }
   let items: Toolkit[] = all.map((t) => ({ ...t, connected: connected.has(t.slug) }));
   if (search) items = items.filter((t) => t.name.toLowerCase().includes(search) || t.slug.includes(search) || t.description?.toLowerCase().includes(search));
   if (category) items = items.filter((t) => t.categories.some((x) => x.toLowerCase() === category.toLowerCase()));
   const categories = [...new Set(all.flatMap((t) => t.categories))].sort();
   const connectedApps = all.filter((t) => connected.has(t.slug)).map((t) => ({ ...t, connected: true }));
-  return c.json({ apps: items.slice(0, Number(c.req.query('limit') ?? 120)), connected: [...connected], connectedApps, categories, total: items.length });
+  return c.json({ apps: items.slice(0, Number(c.req.query('limit') ?? 120)), connected: [...connected], connectedApps, categories, total: items.length, available: true });
 });
 
 api.post('/apps/:slug/connect', async (c) => {
@@ -425,8 +487,11 @@ api.post('/apps/:slug/connect', async (c) => {
   cb.searchParams.set('slug', slug);
   if (botId) cb.searchParams.set('bot', botId);
   if (seq) cb.searchParams.set('seq', String(seq));
-  const r = await startConnect(user.id, slug, cb.toString());
-  return c.json(r);
+  try {
+    return c.json(await startConnect(user.id, slug, cb.toString()));
+  } catch (e) {
+    return appsProblem(c, e);
+  }
 });
 
 api.get('/apps/callback', async (c) => {
@@ -454,7 +519,11 @@ api.get('/apps/callback', async (c) => {
 });
 
 api.delete('/apps/:slug', async (c) => {
-  await disconnect(c.get('user').id, c.req.param('slug'));
+  try {
+    await disconnect(c.get('user').id, c.req.param('slug'));
+  } catch (e) {
+    return appsProblem(c, e);
+  }
   hub.emit(c.get('user').id, { type: 'connections' });
   return c.json({ ok: true });
 });

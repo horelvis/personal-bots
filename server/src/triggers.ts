@@ -1,5 +1,5 @@
 import { db, now } from './db.js';
-import { composio } from './composio.js';
+import { composio, composioEnabled } from './composio.js';
 import { appendRow } from './store.js';
 
 /**
@@ -24,6 +24,10 @@ export async function initTriggers(enqueue: (botId: string, t: any) => void) {
   migrate();
   enqueueFn = enqueue;
   const count = (db.prepare("SELECT COUNT(*) n FROM routines WHERE schedule LIKE 'event:%'").get() as any).n;
+  if (!composioEnabled) {
+    console.log(`[triggers] off (no COMPOSIO_API_KEY); ${count} event routine(s) will not fire`);
+    return;
+  }
   if (count > 0) await ensureSubscribed();
   console.log(`[triggers] ${count} event routine(s)`);
 }

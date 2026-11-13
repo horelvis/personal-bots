@@ -175,9 +175,22 @@ The keys you need:
 | Key | Used for |
 |---|---|
 | `ORGO_API_KEY`, `ORGO_COMPUTER_ID` | The computer and its screens |
-| `COMPOSIO_API_KEY` | Connected apps |
+| `COMPOSIO_API_KEY` | Optional. Connected apps and event routines. It must be a project API key (`ak_...`) with full access; without it the app runs with connected apps switched off |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional. Sign in with Google through your own OAuth client (see below) |
 | `XAI_API_KEY` | Voice and `x_search` |
 | `SESSION_SECRET` | Sign-in sessions and the tokens agents use to reach `/mcp` |
+
+## Sign-in
+
+Three ways in, each independent of the others:
+
+- **Your own OAuth client (recommended).** Create an OAuth client of type *Web application* in Google Cloud, add `<SERVER_URL>/api/auth/google/callback` as an authorized redirect URI, and set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. The app asks Google only for `openid email profile` and accepts only a verified email.
+- **Through Composio.** With `COMPOSIO_API_KEY` set and no Google client, sign-in uses a Composio-managed Gmail connection, as before.
+- **Without Google.** `DEV_LOGIN=1` on a local machine, or a one-time link from `scripts/sign-in-link.sh`.
+
+`ALLOWED_EMAILS` limits who can create an account with any of them.
+
+Providers are declared in `server/src/oauth/providers.ts`. Adding one (GitHub, Microsoft...) is one entry there: its endpoints, the scopes that identify a person, and how its profile answer maps to an email. It is offered on the sign-in screen as soon as `<ID>_CLIENT_ID` and `<ID>_CLIENT_SECRET` are set. Each provider also lists its *services* (Gmail, Calendar...) with the scopes they need; today none is defined, and sign-in keeps no tokens.
 
 ## Models and subscriptions
 
