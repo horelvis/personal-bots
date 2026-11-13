@@ -149,6 +149,25 @@ With `HQ_LOCAL=0` the server reaches the computer through the Orgo API instead o
 
 `npm run build && npm start` serves the built app from the API port.
 
+### Without Orgo: screens in a local container
+
+Set `HQ_BOX=docker` and the bots' screens run in one Linux container on your machine, under any Docker-compatible runtime (Colima, OrbStack, Docker Desktop). `ORGO_API_KEY` and `ORGO_COMPUTER_ID` are then not needed.
+
+```bash
+brew install colima && colima start --cpu 2 --memory 4    # or start the runtime you already have
+echo 'HQ_BOX=docker' >> .env
+npm run dev -w server
+```
+
+The server builds the image (`server/box/docker/`) on first use, which takes a few minutes, and starts the container `hq-box` when a bot needs its screen. What to know:
+
+- Up to four screens, one X display each, dressed like on Orgo. The live viewer, **Take control**, the screen preview and the Library work the same.
+- The browser is Chromium (there is no Chrome for Linux on arm64).
+- Ports are published on `127.0.0.1` only: VNC on 5999-6002, DevTools on 9299-9302.
+- Browser profiles and Library files live in the volume `hq-box-data`; the container itself can be removed at any time (`docker rm -f hq-box`).
+- Only the screens and browsers are in the container. The Hermes agents still run on your machine, so their shell commands act on it. The first bot is your existing agent: point its browser at `http://127.0.0.1:9299` in its own Hermes config if you want it to browse on its screen.
+- **Sign in to a subscription** from the Engine panel is not available in this mode (it opens a terminal on the machine the agent runs on).
+
 The keys you need:
 
 | Key | Used for |
@@ -166,6 +185,7 @@ Open a bot's details panel, **Engine**. Pick a provider and model there. **Sign 
 
 ```bash
 npm run typecheck       # server and web
+npm test                # unit tests (server)
 npm run build
 node tests/e2e.mjs https://<your-url>    # needs DEV_LOGIN=1, or E2E_SESSION=<session cookie>
 ```
