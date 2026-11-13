@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildRawMessage, messageSummary, messageText } from './gmail.js';
+import { buildRawMessage, describeSend, messageSummary, messageText, safeId } from './gmail.js';
 
 const decode = (raw: string) => Buffer.from(raw, 'base64url').toString('utf8');
 
@@ -52,4 +52,24 @@ test('the text of a message prefers plain text, falls back to stripped HTML, and
   const long = { payload: { mimeType: 'text/plain', body: { data: b64('x'.repeat(50)) } } };
   assert.equal(messageText(long, 20), `${'x'.repeat(20)}\n[cut: 30 more characters]`);
   assert.equal(messageText({ payload: {} }), '');
+});
+
+test('an entity that names no character is left as it is, and the rest is still read', () => {
+  const odd = { payload: { mimeType: 'text/html', body: { data: b64('<p>hi &#99999999; and &#xFFFFFFFF; there &#65;</p>') } } };
+  assert.equal(messageText(odd), 'hi &#99999999; and &#xFFFFFFFF; there A');
+});
+
+test('what the user is asked to approve names everyone the message goes to, and shows the text', () => {
+  const detail = describeSend({ to: ['ana@example.com'], cc: ['eva@example.com'], bcc: ['hidden@example.com'], subject: 'Q3 report', body: 'Here it is.', in_reply_to: '<abc@mail.example>' });
+  assert.equal(detail, 'To: ana@example.com\nCc: eva@example.com\nBcc: hidden@example.com\nSubject: Q3 report\nReply in an existing thread\n\nHere it is.');
+  assert.equal(describeSend({ to: 'ana@example.com, luis@example.com', subject: 's', body: 'b' }), 'To: ana@example.com, luis@example.com\nSubject: s\n\nb');
+  const long = describeSend({ to: ['ana@example.com'], subject: 's', body: 'x'.repeat(2000) });
+  assert.match(long, /x{1200}\n\[\+800 more characters\]$/);
+  assert.equal(describeSend({ subject: 's', body: 'b' }), 'To: (nobody)\nSubject: s\n\nb');
+});
+
+test('ids that could change the address of a request are refused', () => {
+  assert.equal(safeId('18c2f0a1b2c3d4e5'), '18c2f0a1b2c3d4e5');
+  assert.equal(safeId('abc_DEF-123'), 'abc_DEF-123');
+  for (const bad of ['..', '.', '', 'a/b', 'a?b=1', 'a b', 'a%2Fb']) assert.throws(() => safeId(bad), /id/i, bad);
 });

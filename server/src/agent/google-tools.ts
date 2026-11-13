@@ -1,6 +1,7 @@
 import { accessTokenFor, NotConnected } from '../oauth/connections.js';
-import { readMessage, searchMessages, sendMessage } from '../google/gmail.js';
-import { createEvent, deleteEvent, listEvents, updateEvent } from '../google/calendar.js';
+import { describeSend, readMessage, searchMessages, sendMessage } from '../google/gmail.js';
+import { createEvent, deleteEvent, describeEventChange, getEvent, listEvents, updateEvent } from '../google/calendar.js';
+import type { ToolCtx } from './tools.js';
 import type { ToolDef, ToolResult } from './tools.js';
 
 /**
@@ -21,6 +22,9 @@ async function withToken(userId: string, service: 'gmail' | 'calendar', work: (t
     throw e;
   }
 }
+
+/** The event a change is about, for the approval card. Best effort: a card without it says so. */
+const eventNow = (ctx: ToolCtx, id: unknown) => accessTokenFor(ctx.userId, 'google', 'calendar').then((token) => getEvent(token, String(id))).catch(() => undefined);
 
 const json = (v: unknown) => JSON.stringify(v, null, 1);
 const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.map(String) : typeof v === 'string' && v.trim() ? v.split(',').map((s) => s.trim()) : undefined);
@@ -59,7 +63,7 @@ export const googleTools: ToolDef[] = [
     }, ['to', 'subject', 'body']),
     activity: 'connecting_service',
     label: 'Sending an email',
-    approval: { toolkit: 'gmail', title: 'Gmail: send an email', needs: { provider: 'google', service: 'gmail' } },
+    approval: { toolkit: 'gmail', title: 'Gmail: send an email', needs: { provider: 'google', service: 'gmail' }, describe: (a) => describeSend(a) },
     impl: (a, ctx) => withToken(ctx.userId, 'gmail', async (token) => {
       const sent = await sendMessage(token, { to: strings(a.to) ?? [], cc: strings(a.cc), bcc: strings(a.bcc), subject: String(a.subject ?? ''), body: String(a.body ?? ''), threadId: a.thread_id ? String(a.thread_id) : undefined, inReplyTo: a.in_reply_to ? String(a.in_reply_to) : undefined });
       return { output: json({ ok: true, ...sent }), summary: 'Email sent' };
@@ -86,7 +90,7 @@ export const googleTools: ToolDef[] = [
     }, ['summary', 'start', 'end']),
     activity: 'connecting_service',
     label: 'Creating an event',
-    approval: { toolkit: 'googlecalendar', title: 'Google Calendar: create an event', needs: { provider: 'google', service: 'calendar' } },
+    approval: { toolkit: 'googlecalendar', title: 'Google Calendar: create an event', needs: { provider: 'google', service: 'calendar' }, describe: (a) => describeEventChange('create', a) },
     impl: (a, ctx) => withToken(ctx.userId, 'calendar', async (token) => {
       const ev = await createEvent(token, { summary: String(a.summary ?? ''), start: String(a.start ?? ''), end: String(a.end ?? ''), timeZone: a.time_zone ? String(a.time_zone) : undefined, description: a.description !== undefined ? String(a.description) : undefined, location: a.location !== undefined ? String(a.location) : undefined, attendees: strings(a.attendees) });
       return { output: json({ ok: true, event: ev }), summary: 'Event created' };
@@ -101,7 +105,7 @@ export const googleTools: ToolDef[] = [
     }, ['id']),
     activity: 'connecting_service',
     label: 'Changing an event',
-    approval: { toolkit: 'googlecalendar', title: 'Google Calendar: change an event', needs: { provider: 'google', service: 'calendar' } },
+    approval: { toolkit: 'googlecalendar', title: 'Google Calendar: change an event', needs: { provider: 'google', service: 'calendar' }, describe: async (a, ctx) => describeEventChange('update', a, await eventNow(ctx, a?.id)) },
     impl: (a, ctx) => withToken(ctx.userId, 'calendar', async (token) => {
       const text = (v: unknown) => (v !== undefined ? String(v) : undefined);
       const ev = await updateEvent(token, String(a.id), { summary: text(a.summary), start: text(a.start), end: text(a.end), timeZone: text(a.time_zone), description: text(a.description), location: text(a.location), attendees: a.attendees !== undefined ? strings(a.attendees) ?? [] : undefined });
@@ -114,7 +118,7 @@ export const googleTools: ToolDef[] = [
     parameters: obj({ id: str('Event id from calendar_list_events.') }, ['id']),
     activity: 'connecting_service',
     label: 'Deleting an event',
-    approval: { toolkit: 'googlecalendar', title: 'Google Calendar: delete an event', needs: { provider: 'google', service: 'calendar' } },
+    approval: { toolkit: 'googlecalendar', title: 'Google Calendar: delete an event', needs: { provider: 'google', service: 'calendar' }, describe: async (a, ctx) => describeEventChange('delete', a, await eventNow(ctx, a?.id)) },
     impl: (a, ctx) => withToken(ctx.userId, 'calendar', async (token) => {
       await deleteEvent(token, String(a.id));
       return { output: json({ ok: true }), summary: 'Event deleted' };

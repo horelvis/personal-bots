@@ -71,7 +71,7 @@ function findOrCreateUser(email: string, name?: string, preferId?: string) {
 const legacyGoogle = () => composioEnabled && !oauthProvider('google');
 const STATE_COOKIE = 'grokbot_oauth_state';
 const PKCE_COOKIE = 'grokbot_oauth_pkce';
-/** Set when the flow in progress connects a service (its id) instead of signing someone in. */
+/** Set when the flow in progress connects a service instead of signing someone in: "<user id>.<service id>". */
 const CONNECT_COOKIE = 'grokbot_oauth_connect';
 /** Cookies of a sign-in in progress: only for the auth routes, gone in ten minutes. */
 const flowCookie = () => ({ httpOnly: true, sameSite: 'Lax' as const, secure: env.serverUrl.startsWith('https:'), path: '/api/auth', maxAge: 600 });
@@ -137,11 +137,14 @@ function beginFlow(c: any, p: (typeof oauthProviders)[number], scopes: string[],
  * The end of a connect flow. It signs nobody in: the tokens go to the person who is already signed
  * in on this browser, which is also the browser that started the flow (the state cookie says so).
  */
-async function finishConnect(c: any, p: (typeof oauthProviders)[number], service: string, kept: string | undefined, verifier: string | undefined) {
+async function finishConnect(c: any, p: (typeof oauthProviders)[number], marker: string, kept: string | undefined, verifier: string | undefined) {
   const back = (result: string) => c.redirect(`${env.appUrl}/?connect=${result}`);
   const user = userFromCookieHeader(c.req.header('cookie'));
   const code = c.req.query('code');
-  if (!user || !Object.hasOwn(p.services, service)) return back('failed');
+  // The cookie names who started the flow: if someone else is signed in by now, nothing is connected.
+  const dot = marker.indexOf('.');
+  const service = marker.slice(dot + 1);
+  if (!user || dot < 1 || marker.slice(0, dot) !== user.id || !Object.hasOwn(p.services, service)) return back('failed');
   if (c.req.query('error')) return back('cancelled');
   if (!code || !stateBelongsTo(p.id, kept) || !sameState(kept, c.req.query('state')) || (p.pkce && !verifier)) return back('failed');
   try {
@@ -586,7 +589,7 @@ api.get('/connections/:provider/:service/connect', (c) => {
   if (!p || !Object.hasOwn(p.services, service)) return c.json({ error: 'not found' }, 404);
   // Ask again for what is already connected too: the new grant replaces the old one.
   const wanted = [...new Set([...connectedServices(c.get('user').id, p.id), service])];
-  setCookie(c, CONNECT_COOKIE, service, flowCookie());
+  setCookie(c, CONNECT_COOKIE, `${c.get('user').id}.${service}`, flowCookie());
   return c.redirect(beginFlow(c, p, scopesFor(p, wanted), true));
 });
 

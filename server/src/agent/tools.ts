@@ -42,7 +42,9 @@ export interface ToolDef {
    * Set on tools that act for the user outside the app (send, create, change, delete): the call
    * waits for the user's approval card. `title` reads "<App>: <what it does>"; `toolkit` names the app.
    */
-  approval?: { toolkit: string; title: string; needs?: { provider: string; service: string } };
+  approval?: { toolkit: string; title: string; needs?: { provider: string; service: string }; describe?: (args: any, ctx: ToolCtx) => Promise<string> | string };
+  // `describe`: what the card says the call will do, in words the user can check (who gets the email, which event).
+  // Without it the card lists the call's plain arguments.
   // `needs`: the connection the tool works through. Without it the user is not asked to approve a call that cannot run.
 }
 

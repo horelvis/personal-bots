@@ -3,6 +3,8 @@
  * The functions that talk to Google take an access token; the rest is plain data handling.
  */
 
+import { safeId } from './gmail.js';
+
 const API = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -69,6 +71,38 @@ export function eventSummary(ev: any) {
   return out;
 }
 
+const people = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(',') : []).map((s) => s.trim()).filter(Boolean);
+
+/**
+ * What the approval card shows before an event is created, changed or deleted: which event, when,
+ * and who gets an invitation or a cancellation. `existing` is the event as it is now, when it could
+ * be looked up.
+ */
+export function describeEventChange(kind: 'create' | 'update' | 'delete', a: any, existing?: Record<string, any>): string {
+  const lines: string[] = [];
+  if (kind === 'create') {
+    lines.push(`Create: ${String(a?.summary ?? '(no title)')}`);
+    if (a?.start && a?.end) lines.push(`When: ${a.start} to ${a.end}`);
+    if (a?.location) lines.push(`Where: ${a.location}`);
+    if (people(a?.attendees).length) lines.push(`Invites: ${people(a.attendees).join(', ')}`);
+    return lines.join('\n');
+  }
+  const verb = kind === 'delete' ? 'Delete' : 'Change';
+  if (!existing) lines.push(`${verb}: event ${String(a?.id ?? '')} (could not be looked up)`);
+  else {
+    lines.push(`${verb}: ${existing.summary}`, `${kind === 'delete' ? 'When' : 'Now'}: ${existing.start} to ${existing.end}`);
+    if (kind === 'delete' && existing.attendees?.length) lines.push(`Invited: ${existing.attendees.join(', ')}`);
+  }
+  if (kind === 'update') {
+    if (a?.summary !== undefined) lines.push(`New title: ${a.summary}`);
+    if (a?.start && a?.end) lines.push(`New time: ${a.start} to ${a.end}`);
+    if (a?.location !== undefined) lines.push(`New place: ${a.location}`);
+    if (a?.description !== undefined) lines.push(`New details: ${String(a.description).slice(0, 300)}`);
+    if (a?.attendees !== undefined) lines.push(`New invite list: ${people(a.attendees).join(', ') || '(nobody)'}`);
+  }
+  return lines.join('\n');
+}
+
 async function call(token: string, path: string, init: { method?: string; body?: unknown } = {}): Promise<any> {
   const res = await fetch(`${API}${path}`, {
     method: init.method ?? 'GET',
@@ -95,6 +129,8 @@ export async function listEvents(token: string, a: { from?: string; to?: string;
 
 export const createEvent = async (token: string, e: EventInput) => eventSummary(await call(token, '?sendUpdates=all', { method: 'POST', body: eventBody(e) }));
 
-export const updateEvent = async (token: string, id: string, e: EventInput) => eventSummary(await call(token, `/${encodeURIComponent(id)}?sendUpdates=all`, { method: 'PATCH', body: eventBody(e) }));
+export const getEvent = async (token: string, id: string) => eventSummary(await call(token, `/${safeId(id)}`));
 
-export const deleteEvent = async (token: string, id: string) => { await call(token, `/${encodeURIComponent(id)}?sendUpdates=all`, { method: 'DELETE' }); };
+export const updateEvent = async (token: string, id: string, e: EventInput) => eventSummary(await call(token, `/${safeId(id)}?sendUpdates=all`, { method: 'PATCH', body: eventBody(e) }));
+
+export const deleteEvent = async (token: string, id: string) => { await call(token, `/${safeId(id)}?sendUpdates=all`, { method: 'DELETE' }); };

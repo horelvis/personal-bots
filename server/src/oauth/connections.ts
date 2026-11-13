@@ -39,7 +39,7 @@ export class NotConnected extends Error {
   }
 }
 
-interface Row { user_id: string; provider: string; email: string; services: string; scopes: string; access_token: string; refresh_token: string | null; expires_at: number }
+interface Row { user_id: string; provider: string; email: string; subject: string; services: string; scopes: string; access_token: string; refresh_token: string | null; expires_at: number }
 
 const rowFor = (userId: string, providerId: string) => db.prepare('SELECT * FROM oauth_connections WHERE user_id=? AND provider=?').get(userId, providerId) as Row | undefined;
 const servicesOf = (row: Row | undefined): string[] => { try { return row ? (JSON.parse(row.services) as string[]) : []; } catch { return []; } };
@@ -56,8 +56,9 @@ export function saveConnection(userId: string, provider: OAuthProvider, tokens: 
   const old = rowFor(userId, provider.id);
   const granted = servicesCovered(provider, tokens.scope ?? '');
   const services = wanted.filter((s) => granted.includes(s));
-  // No refresh token comes back when the provider already gave one for this grant: keep the one we have.
-  const refresh = tokens.refreshToken ? box.seal(tokens.refreshToken) : old?.refresh_token ?? null;
+  // No refresh token comes back when the provider already gave one for this grant: keep the one we have,
+  // but only when it is the same account. Another account's token must never sit under this one's name.
+  const refresh = tokens.refreshToken ? box.seal(tokens.refreshToken) : old && old.subject === profile.subject ? old.refresh_token : null;
   if (!services.length) return [];
   db.prepare(
     `INSERT INTO oauth_connections(user_id,provider,email,subject,services,scopes,access_token,refresh_token,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)

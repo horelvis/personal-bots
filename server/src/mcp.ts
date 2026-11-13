@@ -71,7 +71,9 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
         return text(DECLINED);
       }
       if (pol.decision === 'ask') {
-        const answer = await requestApproval({ userId, botId }, pol, args, rowSeq);
+        // The card must say what will happen. A description that fails falls back to the plain arguments.
+        const detail = own.approval.describe ? await Promise.resolve(own.approval.describe(args, ctx)).catch(() => undefined) : undefined;
+        const answer = await requestApproval({ userId, botId }, { ...pol, detail }, args, rowSeq);
         if (answer !== 'allow') return text(answer === 'deny' ? DECLINED : SKIPPED);
       }
     }

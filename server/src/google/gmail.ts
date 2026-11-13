@@ -7,6 +7,34 @@ const API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
 const ADDRESS = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
 
+/** An id as Google hands them out. Anything else ("..", a slash, a query) could change where a request goes. */
+export function safeId(id: unknown): string {
+  const v = String(id ?? '');
+  if (!/^[A-Za-z0-9_-]{1,200}$/.test(v)) throw new Error('That is not a valid id (take it from a search or list result)');
+  return v;
+}
+
+const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(',') : []).map((s) => s.trim()).filter(Boolean);
+
+/**
+ * What the approval card shows before an email goes out. Everyone it would reach is named (Bcc
+ * included) and the text is shown: the card is what stands between a misled agent and the send.
+ */
+export function describeSend(a: any): string {
+  const to = asList(a?.to), cc = asList(a?.cc), bcc = asList(a?.bcc);
+  const body = String(a?.body ?? '');
+  const max = 1200;
+  return [
+    `To: ${to.length ? to.join(', ') : '(nobody)'}`,
+    ...(cc.length ? [`Cc: ${cc.join(', ')}`] : []),
+    ...(bcc.length ? [`Bcc: ${bcc.join(', ')}`] : []),
+    `Subject: ${String(a?.subject ?? '').replace(/[\r\n]+/g, ' ')}`,
+    ...(a?.in_reply_to || a?.thread_id ? ['Reply in an existing thread'] : []),
+    '',
+    body.length > max ? `${body.slice(0, max)}\n[+${body.length - max} more characters]` : body,
+  ].join('\n');
+}
+
 function addresses(list: string[] | undefined, what: string): string[] {
   const out = (list ?? []).map((a) => String(a).trim()).filter(Boolean);
   for (const a of out) if (!ADDRESS.test(a)) throw new Error(`"${a.slice(0, 80)}" is not an email address (${what})`);
@@ -74,7 +102,12 @@ function htmlToText(html: string): string {
     .replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, '')
     .replace(/<\/(p|div|tr|li|h[1-6])>|<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, '')
-    .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, e: string) => (e[0] === '#' ? String.fromCodePoint(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : ENTITIES[e.toLowerCase()] ?? m))
+    .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, e: string) => {
+      if (e[0] !== '#') return ENTITIES[e.toLowerCase()] ?? m;
+      const code = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : Number(e.slice(1));
+      // Mail is somebody else's text: a number that names no character stays as written.
+      return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+    })
     .split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
 }
 
@@ -103,15 +136,15 @@ export async function searchMessages(token: string, query: string, max = 10) {
   const list = await call(token, `/messages?maxResults=${Math.max(1, Math.min(25, max))}&q=${encodeURIComponent(query)}`);
   const ids: string[] = (list.messages ?? []).map((m: any) => m.id);
   const meta = '&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=Message-ID';
-  return Promise.all(ids.map(async (id) => messageSummary(await call(token, `/messages/${encodeURIComponent(id)}?format=metadata${meta}`))));
+  return Promise.all(ids.map(async (id) => messageSummary(await call(token, `/messages/${safeId(id)}?format=metadata${meta}`))));
 }
 
 export async function readMessage(token: string, id: string) {
-  const msg = await call(token, `/messages/${encodeURIComponent(id)}?format=full`);
+  const msg = await call(token, `/messages/${safeId(id)}?format=full`);
   return { ...messageSummary(msg), text: messageText(msg) };
 }
 
 export async function sendMessage(token: string, m: OutgoingMessage & { threadId?: string }) {
-  const sent = await call(token, '/messages/send', { method: 'POST', body: { raw: buildRawMessage(m), ...(m.threadId ? { threadId: m.threadId } : {}) } });
+  const sent = await call(token, '/messages/send', { method: 'POST', body: { raw: buildRawMessage(m), ...(m.threadId ? { threadId: safeId(m.threadId) } : {}) } });
   return { id: String(sent.id), threadId: String(sent.threadId ?? '') };
 }
