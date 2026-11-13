@@ -239,7 +239,7 @@ docs/               architecture; the Orgo and xAI/Composio guides predate the H
 - Experimental, no security audit. Bots share one computer and can reach each other's files there.
 - Approval cards cover Composio write actions. What a bot does through its browser or shell is not gated, and Hermes' own "risky command" prompts are not shown in the app yet.
 - Four bots at most, because of Orgo's four-screen limit.
-- The app still calls itself "Grokbot" in places (page title, package names, the database file).
+- Some internal names still say "grokbot" (package names, the database file, cookies, folders on the bots' computer). Nothing a user sees does.
 - The screen look is an original implementation inspired by OrgoAI/bops; no code or assets from that repository are used.
 
 ## License and credits
