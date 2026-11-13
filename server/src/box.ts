@@ -3,17 +3,18 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from './env.js';
 import { orgo } from './orgo.js';
+import { dockerBox } from './dockerbox.js';
+import { displayFor } from './lib/screens.js';
 
 /**
  * The box: the one Orgo computer every bot works on. When this server runs on that computer
- * (HQ_LOCAL=1) commands and files go straight to the local shell and disk; otherwise they go
- * through Orgo's API to ORGO_COMPUTER_ID.
+ * (HQ_LOCAL=1) commands and files go straight to the local shell and disk; with HQ_BOX=docker they
+ * go into the local container; otherwise they go through Orgo's API to ORGO_COMPUTER_ID.
  */
 
 export interface BashResult { output: string; exit_code: number }
 
-/** Orgo screen id -> X display. The default screen is :99, "screen-100" is :100. */
-export const displayFor = (screenId?: string | null) => (!screenId || screenId === 'default' ? ':99' : `:${screenId.replace('screen-', '')}`);
+export { displayFor };
 
 /** Only what a desktop command needs; none of this server's secrets. */
 function shellEnv(screenId?: string | null): NodeJS.ProcessEnv {
@@ -44,6 +45,7 @@ export const box = {
   /** Run a bash command on the box. `screenId` picks which screen's DISPLAY it sees. */
   async bash(command: string, timeoutSec = 60, screenId?: string | null): Promise<BashResult> {
     if (env.localBox) return localBash(command, timeoutSec, screenId);
+    if (env.dockerBox) return dockerBox.bash(command, timeoutSec, screenId);
     if (!env.orgoComputerId) throw new Error('ORGO_COMPUTER_ID is not set');
     const cmd = `export DISPLAY=${displayFor(screenId)}; ${command}`;
     const r = await orgo.bash(env.orgoComputerId, screenId ?? undefined, cmd, timeoutSec);
@@ -58,6 +60,7 @@ export const box = {
       await fs.chmod(file, parseInt(mode, 8));
       return;
     }
+    if (env.dockerBox) return dockerBox.writeFile(file, buf, mode);
     // Orgo drops very long commands, so the file goes over in base64 pieces.
     const b64 = buf.toString('base64');
     const tmp = `${file}.b64`;
@@ -73,6 +76,7 @@ export const box = {
     if (env.localBox) {
       try { return await fs.readFile(file); } catch { return null; }
     }
+    if (env.dockerBox) return dockerBox.readFile(file);
     const r = await box.bash(`[ -f ${q(file)} ] && base64 -w0 ${q(file)} || echo __missing__`, 60);
     const out = r.output.trim();
     if (!out || out.endsWith('__missing__')) return null;

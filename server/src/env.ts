@@ -17,6 +17,10 @@ function secret(name: string): string {
   throw new Error(`Missing env ${name} (or ${name}_FILE)`);
 }
 
+/** `docker` runs the bots' screens in a local container instead of an Orgo computer. */
+const dockerBox = process.env.HQ_BOX === 'docker';
+if (dockerBox && process.env.HQ_LOCAL === '1') throw new Error('HQ_BOX=docker and HQ_LOCAL=1 cannot be used together: the box is either a local container or the machine this server runs on.');
+
 const hermesHome = process.env.HERMES_HOME_PRIMARY ?? path.join(os.homedir(), '.hermes');
 
 export const env = {
@@ -27,7 +31,8 @@ export const env = {
   xaiKey: req('XAI_API_KEY'),
   xaiModel: process.env.XAI_MODEL ?? 'grok-4.7',
   composioKey: req('COMPOSIO_API_KEY'),
-  orgoKey: secret('ORGO_API_KEY'),
+  /** Not needed when the screens run in a local container. */
+  orgoKey: dockerBox ? '' : secret('ORGO_API_KEY'),
   sessionSecret: req('SESSION_SECRET'),
   devLogin: process.env.DEV_LOGIN === '1',
   dbPath: process.env.DB_PATH ?? new URL('../../data/grokbot.db', import.meta.url).pathname,
@@ -54,6 +59,12 @@ export const env = {
   orgoComputerId: process.env.ORGO_COMPUTER_ID ?? '',
   /** This server runs on that computer, so shell commands run locally instead of through Orgo's API. */
   localBox: process.env.HQ_LOCAL === '1',
+  /** The bots' screens run in a local Linux container (HQ_BOX=docker); no Orgo account is involved. */
+  dockerBox,
+  dockerBin: process.env.HQ_DOCKER_BIN ?? 'docker',
+  /** Name of the container; its image and data volume are named after it. */
+  dockerContainer: process.env.HQ_DOCKER_CONTAINER ?? 'hq-box',
+  dockerScreenSize: /^\d{3,4}x\d{3,4}$/.test(process.env.HQ_SCREEN_SIZE ?? '') ? process.env.HQ_SCREEN_SIZE! : '1440x900',
   /**
    * DevTools URL of a Chrome that already runs on the default screen and belongs to the primary bot
    * (e.g. http://127.0.0.1:9333). When set, we never start or stop that screen's Chrome ourselves.

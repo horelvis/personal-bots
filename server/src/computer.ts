@@ -1,9 +1,11 @@
 import { db, now } from './db.js';
 import { env } from './env.js';
 import { hub } from './lib/hub.js';
-import { orgo, OrgoError, type OrgoScreen } from './orgo.js';
+import { orgo, OrgoError } from './orgo.js';
 import { cdpPortFor, dressScreen, resetScreen, undressScreen, type DeskBot } from './desk.js';
 import { box } from './box.js';
+import { dockerBox } from './dockerbox.js';
+import type { Screen } from './lib/screens.js';
 import type { ComputerState } from './types.js';
 
 /**
@@ -11,7 +13,23 @@ import type { ComputerState } from './types.js';
  * engine already lives on that computer's own desktop, so it keeps the default screen; every other
  * bot gets a screen of its own, dressed in its colour (see desk.ts). The computer is never created,
  * suspended or deleted from here: it is somebody's working machine.
+ *
+ * With HQ_BOX=docker the computer is a local container (dockerbox.ts) with the same four screens;
+ * the app starts it when needed.
  */
+
+/** Stands in for the Orgo id when the computer is the local container. */
+const DOCKER_ID = 'docker';
+
+/** Whether there is a computer for the bots at all. */
+export const hasComputer = () => env.dockerBox || !!env.orgoComputerId;
+
+/** The screens of the computer, wherever it runs. */
+const screensOf = {
+  list: (id: string): Promise<Screen[]> => (env.dockerBox ? dockerBox.listScreens() : orgo.listScreens(id)),
+  get: (id: string, screenId: string): Promise<Screen> => (env.dockerBox ? dockerBox.getScreen(screenId) : orgo.getScreen(id, screenId)),
+  create: (id: string): Promise<Screen> => (env.dockerBox ? dockerBox.createScreen() : orgo.createScreen(id)),
+};
 
 /** Orgo allows this many screens on one Linux computer, the default one included. */
 export const MAX_SCREENS = 4;
@@ -19,6 +37,7 @@ export const MAX_SCREENS = 4;
 export interface BotScreen { computerId: string; screenId: string; width?: number; height?: number }
 
 function computerId(): string {
+  if (env.dockerBox) return DOCKER_ID;
   if (!env.orgoComputerId) throw new Error('ORGO_COMPUTER_ID is not set, so there is no computer for the bots to use.');
   return env.orgoComputerId;
 }
@@ -45,7 +64,7 @@ export function computerState(userId: string): ComputerState {
     screenId: s.screen_id as string,
     ...(s.width && s.height ? { width: s.width as number, height: s.height as number } : {}),
   }));
-  return { status: r.status, orgoId: env.orgoComputerId || r.orgo_id, error: r.error, screens, maxScreens: Math.min(env.maxBots, MAX_SCREENS) };
+  return { status: r.status, orgoId: env.dockerBox ? DOCKER_ID : env.orgoComputerId || r.orgo_id, error: r.error, screens, maxScreens: Math.min(env.maxBots, MAX_SCREENS) };
 }
 
 function mapStatus(s: string): ComputerState['status'] {
@@ -79,6 +98,14 @@ export function ensureComputer(userId: string): Promise<string> {
   if (inflight) return inflight;
   inflight = (async () => {
     try {
+      if (env.dockerBox) {
+        // The first start builds the image, which takes minutes; later ones take a second.
+        if (rowFor(userId).status !== 'running') setStatus(userId, 'starting');
+        await dockerBox.ensure();
+        if (rowFor(userId).status !== 'running') setStatus(userId, 'running');
+        checkedAt = Date.now();
+        return id;
+      }
       const c = await orgo.getComputer(id);
       if (c.status === 'running' && !c.asleep) {
         if (rowFor(userId).status !== 'running') setStatus(userId, 'running');
@@ -126,7 +153,7 @@ const verified = new Map<string, number>();
 const leasing = new Map<string, Promise<BotScreen>>();
 const dressing = new Map<string, Promise<void>>();
 
-function saveSize(botId: string, s: OrgoScreen | undefined) {
+function saveSize(botId: string, s: Screen | undefined) {
   if (s?.width && s?.height) db.prepare('UPDATE screens SET width=?, height=? WHERE bot_id=?').run(s.width, s.height, botId);
 }
 
@@ -149,7 +176,7 @@ async function lease(userId: string, botId: string): Promise<BotScreen> {
       return { computerId: id, screenId: mine.screen_id, width: mine.width ?? undefined, height: mine.height ?? undefined };
     }
     try {
-      const s = await orgo.getScreen(id, mine.screen_id);
+      const s = await screensOf.get(id, mine.screen_id);
       verified.set(botId, Date.now());
       saveSize(botId, s);
       db.prepare('UPDATE screens SET last_used_at=? WHERE bot_id=?').run(now(), botId);
@@ -162,16 +189,16 @@ async function lease(userId: string, botId: string): Promise<BotScreen> {
   }
 
   const taken = new Set((db.prepare('SELECT screen_id FROM screens').all() as any[]).map((r) => r.screen_id as string));
-  const existing = await orgo.listScreens(id);
-  let screen: OrgoScreen | undefined;
+  const existing = await screensOf.list(id);
+  let screen: Screen | undefined;
   if (isPrimaryEngine(botId)) {
-    screen = existing.find((s) => s.id === 'default' || s.default) ?? ({ id: 'default', display: ':99', width: 0, height: 0, default: true } as OrgoScreen);
+    screen = existing.find((s) => s.id === 'default' || s.default) ?? ({ id: 'default', display: ':99', width: 0, height: 0, default: true } as Screen);
     screen = { ...screen, id: 'default' };
   } else {
     screen = existing.find((s) => s.id !== 'default' && !s.default && !taken.has(s.id));
     if (!screen) {
       if (existing.length >= MAX_SCREENS) throw new Error(`Every screen on the computer is in use (${MAX_SCREENS} at most). Remove a bot to free one.`);
-      screen = await orgo.createScreen(id);
+      screen = await screensOf.create(id);
     }
   }
   db.prepare('INSERT OR REPLACE INTO screens(bot_id,user_id,screen_id,last_used_at,width,height) VALUES (?,?,?,?,?,?)').run(botId, userId, screen.id, now(), screen.width || null, screen.height || null);
@@ -213,14 +240,15 @@ export function cdpUrlFor(botId: string, screenId: string): string {
  * answers. Without this a bot's first turn finds no browser and goes off to start one of its own.
  */
 export async function screenForWork(userId: string, botId: string): Promise<void> {
-  if (!env.orgoComputerId) return;
+  if (!hasComputer()) return;
   if (!managesChrome(botId)) {
     // It brings its own browser, so nothing it needs depends on the dressing: don't make it wait.
     void readyScreen(userId, botId).catch((e) => console.warn(`[computer] screen not ready for ${botId}: ${e?.message ?? e}`));
     return;
   }
   const s = await readyScreen(userId, botId);
-  if (!env.localBox) return;
+  // The browser's DevTools port is only reachable from here when the computer is this machine or the local container.
+  if (!env.localBox && !env.dockerBox) return;
   const alive = await fetch(`${cdpUrlFor(botId, s.screenId)}/json/version`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok, () => false);
   if (!alive) await readyScreen(userId, botId, { redress: true });
 }
@@ -256,6 +284,18 @@ export async function suspendComputer(_userId: string, _reason = 'manual'): Prom
 
 /** Refresh status and screen sizes from Orgo (cheap; used when the UI opens). */
 export async function refreshComputer(userId: string): Promise<ComputerState> {
+  if (env.dockerBox) {
+    // A stopped container is not an error: it starts again with the next turn or viewer.
+    const up = await dockerBox.running();
+    const r = rowFor(userId);
+    const s = up ? 'running' : 'stopped';
+    if (s !== r.status && r.status !== 'starting') setStatus(userId, s);
+    if (up) {
+      const byId = new Map((await dockerBox.listScreens()).map((x) => [x.id, x]));
+      for (const row of db.prepare('SELECT bot_id, screen_id FROM screens WHERE user_id=?').all(userId) as any[]) saveSize(row.bot_id, byId.get(row.screen_id));
+    }
+    return computerState(userId);
+  }
   if (!env.orgoComputerId) {
     setStatus(userId, 'error', 'ORGO_COMPUTER_ID is not set.');
     return computerState(userId);

@@ -1,14 +1,17 @@
 import type { IncomingMessage, Server } from 'node:http';
+import net from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
 import { db } from './db.js';
 import { userFromCookieHeader } from './lib/auth.js';
 import { vncAuthResponse } from './lib/des.js';
 import { orgo } from './orgo.js';
+import { env } from './env.js';
+import { dockerBox } from './dockerbox.js';
 import { readyScreen, screenFor } from './computer.js';
 import { viewerClosed, viewerOpened } from './idle.js';
 
 /**
- * VNC relay: browser <-> our server <-> Orgo websockify.
+ * VNC relay: browser <-> our server <-> Orgo websockify, or the local box's VNC server (HQ_BOX=docker).
  * The server performs the RFB handshake upstream with the computer's VNC password
  * (which is root-equivalent and never reaches the browser), then offers the browser
  * an unauthenticated RFB session. In "watch" mode, client input messages
@@ -118,6 +121,60 @@ function msgLength(b: Buffer): number {
   }
 }
 
+/** The computer's side of the relay: a WebSocket to Orgo, or a plain TCP socket to the local box. */
+interface Upstream {
+  password: string;
+  send(b: Buffer): void;
+  close(): void;
+  isOpen(): boolean;
+  onData(f: (b: Buffer) => void): void;
+  /** Called once, when the connection ends or fails. */
+  onEnd(f: (reason: string, failed: boolean) => void): void;
+  /** Settles when the connection is established (or could not be). */
+  opened: Promise<void>;
+}
+
+async function connectUpstream(computerId: string, screenId: string): Promise<Upstream> {
+  if (env.dockerBox) {
+    const { host, port, password } = dockerBox.vnc(screenId);
+    const sock = net.connect({ host, port });
+    sock.setNoDelay(true);
+    const opened = new Promise<void>((res, rej) => { sock.once('connect', () => res()); sock.once('error', rej); });
+    return {
+      password,
+      opened,
+      send: (b) => { sock.write(b); },
+      close: () => { sock.destroy(); },
+      isOpen: () => !sock.destroyed && sock.readyState === 'open',
+      onData: (f) => { sock.on('data', f); },
+      onEnd: (f) => {
+        let told = false;
+        const once = (reason: string, failed: boolean) => { if (!told) { told = true; f(reason, failed); } };
+        sock.on('error', (e) => once(String(e.message), true));
+        sock.on('close', () => once('upstream closed', false));
+      },
+    };
+  }
+  const { password } = await orgo.vncPassword(computerId);
+  const upUrl = `wss://www.orgo.ai/desktops/${computerId}/ws/websockify?token=${encodeURIComponent(password)}${screenId !== 'default' ? `&screen=${encodeURIComponent(screenId)}` : ''}`;
+  const ws = new WebSocket(upUrl, ['binary']);
+  const opened = new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej); });
+  return {
+    password,
+    opened,
+    send: (b) => { ws.send(b); },
+    close: () => { ws.close(); },
+    isOpen: () => ws.readyState === WebSocket.OPEN,
+    onData: (f) => { ws.on('message', (data: Buffer) => f(Buffer.from(data))); },
+    onEnd: (f) => {
+      let told = false;
+      const once = (reason: string, failed: boolean) => { if (!told) { told = true; f(reason, failed); } };
+      ws.on('error', (e) => once(String(e), true));
+      ws.on('close', (code, reason) => once(`upstream ${code} ${reason}`, false));
+    },
+  };
+}
+
 export function attachVncRelay(server: Server) {
   const wss = new WebSocketServer({ noServer: true, handleProtocols: (protocols) => (protocols.has('binary') ? 'binary' : false) });
 
@@ -140,7 +197,7 @@ export function attachVncRelay(server: Server) {
 async function relay(client: WebSocket, userId: string, botId: string, mode: 'watch' | 'control') {
   const fromClient = new ByteQueue();
   const fromUp = new ByteQueue();
-  let upstream: WebSocket | null = null;
+  let upstream: Upstream | null = null;
   let piping = false;
   const filter = new WatchFilter();
   const closeAll = (code = 1000, reason = '') => {
@@ -151,7 +208,7 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
   client.on('message', (data: Buffer) => {
     if (!piping) return fromClient.push(Buffer.from(data));
     const fwd = mode === 'watch' ? filter.feed(Buffer.from(data)) : Buffer.from(data);
-    if (fwd.length && upstream?.readyState === WebSocket.OPEN) upstream.send(fwd);
+    if (fwd.length && upstream?.isOpen()) upstream.send(fwd);
   });
   client.on('close', () => { viewerClosed(userId); fromClient.close(new Error('client closed')); try { upstream?.close(); } catch { /* */ } });
   viewerOpened(userId); // keeps the computer awake while someone is watching (see idle.ts)
@@ -160,18 +217,16 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     const { computerId, screenId } = await screenFor(userId, botId);
     // A screen nobody has used yet is bare; set it up while the person is already watching.
     readyScreen(userId, botId).catch(() => {});
-    const { password } = await orgo.vncPassword(computerId);
-    const upUrl = `wss://www.orgo.ai/desktops/${computerId}/ws/websockify?token=${encodeURIComponent(password)}${screenId !== 'default' ? `&screen=${encodeURIComponent(screenId)}` : ''}`;
-    upstream = new WebSocket(upUrl, ['binary']);
-    upstream.on('message', (data: Buffer) => {
-      if (!piping) return fromUp.push(Buffer.from(data));
+    const up = await connectUpstream(computerId, screenId);
+    upstream = up;
+    up.onData((data) => {
+      if (!piping) return fromUp.push(data);
       if (client.readyState === WebSocket.OPEN) client.send(data);
     });
-    upstream.on('close', (code, reason) => { fromUp.close(new Error(`upstream closed ${code}`)); closeAll(1000, `upstream ${code} ${reason}`); });
-    upstream.on('error', (e) => { fromUp.close(e as Error); closeAll(1011, String(e)); });
-    await new Promise<void>((res, rej) => { upstream!.once('open', () => res()); upstream!.once('error', rej); });
+    up.onEnd((reason, failed) => { fromUp.close(new Error(reason)); closeAll(failed ? 1011 : 1000, reason); });
+    await up.opened;
 
-    const serverInit = await upstreamHandshake(fromUp, (b) => upstream!.send(b), password);
+    const serverInit = await upstreamHandshake(fromUp, (b) => up.send(b), up.password);
     await browserHandshake(fromClient, (b) => client.send(b), serverInit);
     // Flush anything that arrived during the handshake, then switch to piping.
     piping = true;
@@ -180,7 +235,7 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     const leftoverClient = fromClient.takeAll();
     if (leftoverClient.length) {
       const fwd = mode === 'watch' ? filter.feed(leftoverClient) : leftoverClient;
-      if (fwd.length) upstream.send(fwd);
+      if (fwd.length) up.send(fwd);
     }
   } catch (e: any) {
     console.warn('[vnc] relay failed', e?.message ?? e);

@@ -247,8 +247,8 @@ configApi.post('/bots/:id/files/download', async (c) => {
   const { path } = await c.req.json<{ path: string }>().catch(() => ({ path: '' }));
   const rel = safeRel(path);
   if (!rel) return c.json({ error: 'bad path' }, 400);
-  // On the computer itself the file is on our own disk: serve it directly.
-  if (box.local) return c.json({ url: `/api/bots/${b.id}/files/raw?path=${encodeURIComponent(rel)}` });
+  // On the computer itself the file is on our own disk, and the local container is one command away: serve it directly.
+  if (box.local || env.dockerBox) return c.json({ url: `/api/bots/${b.id}/files/raw?path=${encodeURIComponent(rel)}` });
   try {
     if (!env.orgoComputerId) return c.json({ error: 'computer unavailable' }, 409);
     const r: any = await orgo.exportFile(env.orgoComputerId, `${LIB_ROOT}/${b.id}/${rel}`);
@@ -260,12 +260,25 @@ configApi.post('/bots/:id/files/download', async (c) => {
   }
 });
 
-configApi.get('/bots/:id/files/raw', (c) => {
+configApi.get('/bots/:id/files/raw', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
-  if (!b || !box.local) return c.json({ error: 'not found' }, 404);
+  if (!b || (!box.local && !env.dockerBox)) return c.json({ error: 'not found' }, 404);
   const rel = safeRel(c.req.query('path'));
   if (!rel) return c.json({ error: 'bad path' }, 400);
   const root = `${LIB_ROOT}/${b.id}`;
+  const headers = (size: number) => ({
+    'content-type': 'application/octet-stream',
+    'content-length': String(size),
+    'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(rel.split('/').pop()!)}`,
+    'x-content-type-options': 'nosniff',
+  });
+  if (env.dockerBox) {
+    // Same rule as below, checked inside the container: follow links first, then stay inside the library.
+    const found = await box.bash(`f=$(realpath -e -- ${shq(`${root}/${rel}`)}) && r=$(realpath -e -- ${shq(root)}) && [ -f "$f" ] && case "$f" in "$r"/*) printf '%s' "$f" ;; *) exit 3 ;; esac`, 20);
+    const data = found.exit_code === 0 && found.output ? await box.readFile(found.output) : null;
+    if (!data) return c.json({ error: 'not found' }, 404);
+    return new Response(new Uint8Array(data), { headers: headers(data.length) });
+  }
   let file: string;
   try {
     // Follow links before checking, so a link inside the library cannot point outside it.
@@ -274,15 +287,7 @@ configApi.get('/bots/:id/files/raw', (c) => {
   } catch {
     return c.json({ error: 'not found' }, 404);
   }
-  const name = rel.split('/').pop()!;
-  return new Response(Readable.toWeb(fs.createReadStream(file)) as ReadableStream, {
-    headers: {
-      'content-type': 'application/octet-stream',
-      'content-length': String(fs.statSync(file).size),
-      'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
-      'x-content-type-options': 'nosniff',
-    },
-  });
+  return new Response(Readable.toWeb(fs.createReadStream(file)) as ReadableStream, { headers: headers(fs.statSync(file).size) });
 });
 
 // ---------- computer: screens, reset, hibernation ----------

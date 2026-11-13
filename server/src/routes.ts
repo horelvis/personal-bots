@@ -8,7 +8,8 @@ import { hub } from './lib/hub.js';
 import { createSession, destroySession, isOwnerKey, requireUser, userFromCookieHeader, type AuthVars } from './lib/auth.js';
 import { allLive, appendRow, clearConversation, emitBot, getBot, getBotRow, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
-import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
+import { computerState, ensureComputer, forgetBotFiles, hasComputer, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
+import { dockerBox } from './dockerbox.js';
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { orgo } from './orgo.js';
@@ -390,8 +391,9 @@ api.get('/bots/:id/screenshot', async (c) => {
   const b = ownBot(user.id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
   const scr = db.prepare('SELECT screen_id FROM screens WHERE bot_id=?').get(b.id) as any;
-  if (!env.orgoComputerId || computerState(user.id).status !== 'running' || !scr) return c.body(null, 204);
+  if (!hasComputer() || computerState(user.id).status !== 'running' || !scr) return c.body(null, 204);
   try {
+    if (env.dockerBox) return c.body(new Uint8Array(await dockerBox.screenshot(scr.screen_id)), 200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' });
     const s = await orgo.screenshot(env.orgoComputerId, scr.screen_id);
     const b64 = s.image.replace(/^data:[^,]+,/, '');
     return c.body(Buffer.from(b64, 'base64'), 200, { 'Content-Type': s.mime_type ?? 'image/jpeg', 'Cache-Control': 'no-store' });

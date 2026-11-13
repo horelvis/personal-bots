@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { gzipSync } from 'node:zlib';
-import { box, displayFor } from './box.js';
+import { box } from './box.js';
+import { cdpPortFor, displayNumber } from './lib/screens.js';
 
 /**
  * The desk: what makes one screen of the shared computer look like one bot's own tidy computer.
@@ -31,12 +32,7 @@ const BOX_FILES: Record<string, string> = {
 
 const warn = (message: string) => console.warn(`[desk] ${message}`);
 const sha = (s: string | Buffer) => createHash('sha256').update(s).digest('hex');
-const displayNumber = (screenId: string) => Number(displayFor(screenId).slice(1));
-
-/** DevTools port of the Chrome we run on a screen: 9200 + display number (default screen → 9299). */
-export function cdpPortFor(screenId: string): number {
-  return 9200 + displayNumber(screenId);
-}
+export { cdpPortFor };
 
 // ---------------------------------------------------------------- the files that go on the computer
 

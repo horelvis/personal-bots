@@ -1,4 +1,5 @@
 import { env } from './env.js';
+import type { Screen } from './lib/screens.js';
 
 const BASE = 'https://www.orgo.ai/api';
 
@@ -46,7 +47,7 @@ export interface OrgoComputer {
   asleep?: { where: 'host' | 'storage'; waking?: { expected_seconds?: number } } | null;
 }
 
-export interface OrgoScreen { id: string; display: string; width: number; height: number; default: boolean }
+export type OrgoScreen = Screen;
 
 const q = (screen?: string) => (screen && screen !== 'default' ? `?screen=${encodeURIComponent(screen)}` : '');
 
