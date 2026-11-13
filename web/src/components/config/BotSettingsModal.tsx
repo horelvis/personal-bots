@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AvatarColor, AvatarShape, Bot, Memory, Routine, Skill } from '@shared/types';
-import { BotAvatar, BotAvatarFor, PICKER_SHAPES } from '../../avatar/BotAvatar';
+import { BotAvatar, BotAvatarFor, PICKER_CHARACTERS, PICKER_SHAPES } from '../../avatar/BotAvatar';
 import { COLOR_ORDER, botVars, palette } from '../../lib/colors';
 import { configApi, type BotSettingsBundle } from '../../lib/configApi';
 import { useConfigUI, useVersion, type BotSettingsTab } from '../../configStore';
@@ -218,7 +218,7 @@ function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
   );
 }
 
-const SHAPE_ROWS = [PICKER_SHAPES.slice(0, 7), PICKER_SHAPES.slice(7)];
+const SHAPE_ROWS = [PICKER_CHARACTERS.slice(0, 5), PICKER_CHARACTERS.slice(5), PICKER_SHAPES.slice(0, 7), PICKER_SHAPES.slice(7)];
 
 function LookPicker({ shape, color, onShape, onColor }: { shape: AvatarShape; color: AvatarColor; onShape: (s: AvatarShape) => void; onColor: (c: AvatarColor) => void }) {
   return (

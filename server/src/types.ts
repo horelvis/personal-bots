@@ -3,7 +3,10 @@
 export type AvatarShape =
   | 'blob' | 'pebble' | 'bean' | 'egg' | 'squircle' | 'tablet' | 'capsule' | 'cylinder' | 'hex'
   | 'gem' | 'crystal' | 'wedge' | 'shield' | 'dome' | 'arch' | 'cloud' | 'teardrop' | 'leaf'
-  | 'square' | 'sparkle' | 'clover' | 'flower' | 'heart' | 'house' | 'star';
+  | 'square' | 'sparkle' | 'clover' | 'flower' | 'heart' | 'house' | 'star'
+  // The characters (see lib/characters.ts).
+  | 'bot-casual' | 'bot-music' | 'bot-suit' | 'bot-executive' | 'bot-scientist' | 'bot-researcher'
+  | 'bot-hiker' | 'bot-explorer' | 'bot-chef' | 'bot-attendant';
 
 export type AvatarColor =
   | 'black' | 'brown' | 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'blue' | 'violet' | 'magenta' | 'gray';

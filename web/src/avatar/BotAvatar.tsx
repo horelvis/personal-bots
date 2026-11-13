@@ -2,6 +2,7 @@ import type { AvatarColor, AvatarShape, Bot } from '@shared/types';
 import { palette } from '../lib/colors';
 import { Icon } from '../components/Icon';
 import { SHAPES, type ShapeDef } from './shapes.gen';
+import { CHARACTERS, characterUrl, isCharacter } from '@shared/lib/characters';
 
 /** Shapes without an exported SVG fall back to the closest silhouette we have. */
 const FALLBACK: Partial<Record<AvatarShape, string>> = {
@@ -14,6 +15,9 @@ export function shapeDef(shape: AvatarShape | string): ShapeDef {
 }
 
 /** Shapes offered in the Create New Bot picker, in the design's order (rows of 5/5/3). */
+/** The characters, offered before the drawn shapes. */
+export const PICKER_CHARACTERS: AvatarShape[] = CHARACTERS.map((c) => c.id);
+
 export const PICKER_SHAPES: AvatarShape[] = ['blob', 'cloud', 'square', 'sparkle', 'clover', 'heart', 'flower', 'teardrop', 'tablet', 'wedge', 'house', 'star', 'hex'];
 
 interface Props {
@@ -31,6 +35,27 @@ interface Props {
 const OVERDRAW = 55.2 / 36;
 
 export function BotAvatar({ shape, color, size, star, ring, className, title }: Props) {
+  if (isCharacter(shape)) {
+    // A picture on a disc of the bot's colour. It is drawn a little larger than the slot, like the shapes.
+    const d = Math.round(size * 1.18);
+    const off = (d - size) / 2;
+    return (
+      <span className={`bot-avatar ${className ?? ''}`} style={{ width: size, height: size }} title={title} role="img" aria-label={title}>
+        <span
+          className={`bot-avatar__character${ring ? ' is-selected' : ''}`}
+          style={{ width: d, height: d, left: -off, top: -off, background: `color-mix(in srgb, ${palette(color).fill} 26%, #FFFFFF)` }}
+          aria-hidden
+        >
+          <img src={characterUrl(shape)} alt="" width={d} height={d} draggable={false} />
+        </span>
+        {star && (
+          <span className="bot-avatar__star" style={{ width: size * 0.2667, height: size * 0.2667 }}>
+            <Icon name="star" size={size * 0.1333} color="#FFFFFF" />
+          </span>
+        )}
+      </span>
+    );
+  }
   const def = shapeDef(shape);
   const draw = size * OVERDRAW;
   const off = (draw - size) / 2;

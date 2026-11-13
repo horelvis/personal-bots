@@ -1,19 +1,19 @@
 import { useCallback, useState } from 'react';
 import type { AvatarColor, AvatarShape, Bot } from '@shared/types';
-import { BotAvatar, PICKER_SHAPES } from '../../avatar/BotAvatar';
+import { BotAvatar, PICKER_CHARACTERS, PICKER_SHAPES } from '../../avatar/BotAvatar';
 import { api } from '../../lib/api';
 import { COLOR_ORDER, palette } from '../../lib/colors';
 import { useStore } from '../../store';
 import { Icon } from '../Icon';
 import { Modal } from './Modal';
 
-const ROWS = [PICKER_SHAPES.slice(0, 5), PICKER_SHAPES.slice(5, 10), PICKER_SHAPES.slice(10)];
+const ROWS = [PICKER_CHARACTERS.slice(0, 5), PICKER_CHARACTERS.slice(5), PICKER_SHAPES.slice(0, 5), PICKER_SHAPES.slice(5, 10), PICKER_SHAPES.slice(10)];
 const COLOR_ROWS = [COLOR_ORDER.slice(0, 6), COLOR_ORDER.slice(6)];
 
 export function CreateBotModal() {
   const setModal = useStore((s) => s.setModal);
   const [name, setName] = useState('');
-  const [shape, setShape] = useState<AvatarShape>('heart');
+  const [shape, setShape] = useState<AvatarShape>('bot-casual');
   const [color, setColor] = useState<AvatarColor>('orange');
   const [mode, setMode] = useState<Bot['mode']>('personal');
   const [busy, setBusy] = useState(false);

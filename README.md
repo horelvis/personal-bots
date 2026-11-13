@@ -218,6 +218,7 @@ Open a bot's details panel, **Engine**. Pick a provider and model there. **Sign 
 ```bash
 npm run typecheck       # server and web
 npm test                # unit tests (server)
+python3 web/scripts/gen-avatars.py   # cut the character avatars again from the artwork in avatars/
 npm run build
 node tests/e2e.mjs https://<your-url>    # needs DEV_LOGIN=1, or E2E_SESSION=<session cookie>
 ```

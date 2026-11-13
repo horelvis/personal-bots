@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { box } from './box.js';
 import { cdpPortFor, displayNumber } from './lib/screens.js';
+import { characterSvg, isCharacter } from './lib/characters.js';
 
 /**
  * The desk: what makes one screen of the shared computer look like one bot's own tidy computer.
@@ -286,7 +287,27 @@ function shapes(): Record<string, ShapeDef> {
   return shapesCache;
 }
 
-function avatarSvg(shape: string, fill: string): string {
+/** A character's small picture as a data URI. The pictures sit with the web app: in its sources, or in its build once packed. */
+const characterCache = new Map<string, string | null>();
+function characterData(id: string): string | null {
+  if (characterCache.has(id)) return characterCache.get(id)!;
+  let uri: string | null = null;
+  for (const dir of ['../../web/public/assets/avatars', '../../web/dist/assets/avatars']) {
+    try {
+      uri = `data:image/png;base64,${fs.readFileSync(new URL(`${dir}/${id}.small.png`, import.meta.url)).toString('base64')}`;
+      break;
+    } catch { /* try the next place */ }
+  }
+  if (!uri) warn(`picture of ${id} not found, using a drawn shape`);
+  characterCache.set(id, uri);
+  return uri;
+}
+
+function avatarSvg(shape: string, fill: string, wash?: string): string {
+  if (isCharacter(shape)) {
+    const picture = characterData(shape);
+    if (picture) return characterSvg(picture, wash);
+  }
   const all = shapes();
   const def = all[shape] ?? all[SHAPE_FALLBACK[shape] ?? 'blob'] ?? all.blob;
   const safe = (s: string) => /^[\w\s.,\-+]*$/.test(s);
@@ -305,7 +326,7 @@ function lookFor(bot: DeskBot, manageChrome: boolean): { stamp: string; payload:
     manageChrome,
     bot: { id: bot.id, name: bot.name, label: bot.label ?? '', avatarShape: bot.avatarShape, avatarColor: bot.avatarColor },
     colors: { accent: p.accent, ink: p.ink, wash: p.wash, washDeep: p.washDeep },
-    avatarSvg: avatarSvg(bot.avatarShape, hex),
+    avatarSvg: avatarSvg(bot.avatarShape, hex, p.wash),
     wallSvg: wallpaperSvg(p, bot.id),
   };
   const stamp = sha(`${bundle().hash}\n${JSON.stringify(look)}`).slice(0, 20);
