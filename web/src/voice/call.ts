@@ -27,11 +27,14 @@ interface VoiceState {
   captions: Caption[];
   error: string | null;
   startedAt: number | null;
+  /** Rates for the cost estimate, and how many text notes were sent into the call so far. */
+  pricing: { perMinute: number; perTextItem: number } | null;
+  textItems: number;
 }
 
 export const useVoice = create<VoiceState>(() => ({
   status: 'idle', botId: null, callId: null, muted: false, speaking: false, listening: false, thinking: false,
-  working: [], captions: [], error: null, startedAt: null,
+  working: [], captions: [], error: null, startedAt: null, pricing: null, textItems: 0,
 }));
 
 const setV = (p: Partial<VoiceState>) => useVoice.setState(p);
@@ -81,7 +84,7 @@ class VoiceCall {
   private unsubStore: (() => void) | null = null;
   private checkTimer: ReturnType<typeof setTimeout> | null = null;
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
-  private onUnload = () => { if (this.sess && !this.ended) voiceApi.endBeacon(this.botId, this.sess.callId, this.transcript()); };
+  private onUnload = () => { if (this.sess && !this.ended) voiceApi.endBeacon(this.botId, this.sess.callId, this.transcript(), useVoice.getState().textItems); };
 
   constructor(readonly botId: string) {
     // Created synchronously inside the click so autoplay policy lets it run.
@@ -94,7 +97,7 @@ class VoiceCall {
   micLevel() { return useVoice.getState().muted ? 0 : this.mic?.level ?? 0; }
 
   async start() {
-    setV({ status: 'connecting', botId: this.botId, callId: null, muted: false, speaking: false, listening: false, thinking: false, working: [], captions: [], error: null, startedAt: null });
+    setV({ status: 'connecting', botId: this.botId, callId: null, muted: false, speaking: false, listening: false, thinking: false, working: [], captions: [], error: null, startedAt: null, pricing: null, textItems: 0 });
     window.addEventListener('pagehide', this.onUnload);
     let stream: MediaStream;
     try {
@@ -154,7 +157,7 @@ class VoiceCall {
         if (!this.ready) {
           this.ready = true;
           if (this.connectTimer) clearTimeout(this.connectTimer);
-          setV({ status: 'live', startedAt: Date.now() });
+          setV({ status: 'live', startedAt: Date.now(), pricing: this.sess?.pricing ?? null });
           this.watchTranscript();
           this.send({ type: 'response.create' }); // the bot greets first
         }
@@ -401,6 +404,8 @@ class VoiceCall {
     // A user-role item: the voice model ignores system-role items mid-call (tested), but relays these.
     this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `${text}\n\n(Automatic note from your text agent, not spoken by ${this.firstName()}. Tell them the outcome now, briefly.)` }] } });
     this.send({ type: 'response.create' });
+    // Each text note sent into the call is billed on its own: count it for the estimate.
+    setV({ textItems: useVoice.getState().textItems + 1 });
   }
 
   // ---------- teardown ----------
@@ -417,7 +422,7 @@ class VoiceCall {
     this.player.dispose();
     void this.ctx.close().catch(() => {});
     const transcript = this.transcript();
-    if (this.sess) void voiceApi.end(this.botId, this.sess.callId, transcript, error).catch((e) => console.warn('[voice] end failed', e));
+    if (this.sess) void voiceApi.end(this.botId, this.sess.callId, transcript, error, useVoice.getState().textItems).catch((e) => console.warn('[voice] end failed', e));
     if (current === this) current = null;
     if (error) {
       setV({ status: 'error', error, speaking: false, listening: false, thinking: false, working: [] });

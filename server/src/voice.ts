@@ -13,6 +13,11 @@ import { enqueue } from './agent/loop.js';
 import { computerState } from './computer.js';
 import type { ActivityKind, EventBody, MessageBody, RowBody, VoiceCallRecord, VoiceOption } from './types.js';
 import { listMemories } from './engine-memory.js';
+import { formatCost, voiceCost, voiceRates } from './lib/voice-cost.js';
+import { LANGUAGES, languageName, parseAcceptLanguage, resolveLanguage, sttLanguage } from './lib/voice-language.js';
+
+/** What a call is estimated to cost (see lib/voice-cost.ts). */
+const RATES = voiceRates(process.env);
 
 export const voiceApi = new Hono<AuthVars>();
 
@@ -31,14 +36,7 @@ const FALLBACK_VOICES: VoiceOption[] = [
   ['sirius', 'm'], ['ursa', 'f'], ['zagan', 'm'], ['zenith', 'm'],
 ].map(([id, g]) => ({ id, name: id[0].toUpperCase() + id.slice(1), gender: g === 'f' ? 'female' : 'male' }));
 
-export const LANGUAGES: { code: string; name: string }[] = [
-  { code: 'auto', name: 'Auto-detect' }, { code: 'en', name: 'English' }, { code: 'ar-EG', name: 'Arabic (Egypt)' },
-  { code: 'ar-SA', name: 'Arabic (Saudi Arabia)' }, { code: 'ar-AE', name: 'Arabic (UAE)' }, { code: 'bn', name: 'Bengali' },
-  { code: 'zh', name: 'Chinese' }, { code: 'fr', name: 'French' }, { code: 'de', name: 'German' }, { code: 'hi', name: 'Hindi' },
-  { code: 'id', name: 'Indonesian' }, { code: 'it', name: 'Italian' }, { code: 'ja', name: 'Japanese' }, { code: 'ko', name: 'Korean' },
-  { code: 'pt-BR', name: 'Portuguese (Brazil)' }, { code: 'pt-PT', name: 'Portuguese (Portugal)' }, { code: 'ru', name: 'Russian' },
-  { code: 'es-MX', name: 'Spanish (Mexico)' }, { code: 'es-ES', name: 'Spanish (Spain)' }, { code: 'tr', name: 'Turkish' }, { code: 'vi', name: 'Vietnamese' },
-];
+export { LANGUAGES };
 export const SPEEDS = [0.7, 0.85, 1, 1.15, 1.3, 1.5];
 
 let voiceCache: { at: number; voices: VoiceOption[] } | null = null;
@@ -62,9 +60,21 @@ const clampSpeed = (s: unknown) => {
   const n = Number(s);
   return Number.isFinite(n) ? Math.min(1.5, Math.max(0.7, n)) : 1;
 };
-const langName = (code: string) => LANGUAGES.find((l) => l.code.toLowerCase() === code?.toLowerCase())?.name;
-function settingsOf(bot: any) {
-  const language = langName(bot.voice_language) ? String(bot.voice_language) : 'auto';
+/** What the person's browser asks for, to seed a language that was never chosen. */
+const preferredLanguages = (c: { req: { header(name: string): string | undefined } }) => parseAcceptLanguage(c.req.header('accept-language'));
+
+/**
+ * A bot's voice settings. The language is always a listed one: when none was chosen yet (older rows
+ * hold "auto"), the closest to what the person's browser asks for is chosen now and saved, so the
+ * setting says what is actually used.
+ */
+function settingsOf(bot: any, preferred: string[]) {
+  const language = resolveLanguage(bot.voice_language, preferred);
+  if (language !== bot.voice_language) {
+    db.prepare('UPDATE bots SET voice_language=?, updated_at=? WHERE id=?').run(language, now(), bot.id);
+    bot.voice_language = language;
+    emitBot(bot.id);
+  }
   return { voice: String(bot.voice || 'luna'), speed: clampSpeed(bot.voice_speed ?? 1), language };
 }
 
@@ -172,7 +182,7 @@ function voiceInstructions(userId: string, bot: any, language: string): string {
   const memories = listMemories(bot.id).sort((a, b) => Number(b.source === 'chat') - Number(a.source === 'chat')).slice(0, 12).map((m) => `- ${clip(m.text, 200)}`).join('\n');
   const routines = listRoutines(bot.id).filter((r) => r.enabled).slice(0, 6).map((r) => `- ${r.name}: ${r.description}`).join('\n');
   const recent = recentMessages(bot.id, 14).map((m) => `[${ago(m.at)}] ${m.who}: ${clip(m.text.replace(/\s+/g, ' '), 400)}`).join('\n');
-  const lang = language !== 'auto' ? langName(language) : null;
+  const lang = languageName(language) ?? language;
 
   return `# Who you are
 You are ${bot.name}, on a live voice call with ${firstName}, the person you work for. You are an AI Bot on their team${bot.label ? `, and your job is: ${bot.label}` : ''}.${bot.description ? ` ${bot.description}` : ''}${bot.is_primary ? ` You are ${firstName}'s primary Bot and main point of contact.` : ''}
@@ -204,7 +214,7 @@ Only report a task as done once its result has actually come back. If you handed
 # Voice
 - Speak naturally, like a sharp colleague on the phone. Contractions are good.
 - Spoken words only: no markdown, lists, URLs, file paths, IDs or code. Say numbers and dates the way people say them.
-- Summarise; don't read long text verbatim.${lang ? `\n- Speak ${lang} unless ${firstName} clearly switches language.` : `\n- Reply in the language ${firstName} speaks.`}
+- Summarise; don't read long text verbatim.\n- Speak ${lang}. That is the language ${firstName} chose for you: stay in it unless they ask you to switch.
 
 # Ground rules
 - Stay in persona as ${bot.name}. Never say you are a separate voice assistant, model or relay.
@@ -242,7 +252,7 @@ voiceApi.post('/session', async (c) => {
   const { botId } = await c.req.json<{ botId: string }>().catch(() => ({ botId: '' }));
   const bot = ownBot(user.id, botId);
   if (!bot) return c.json({ error: 'not found' }, 404);
-  const s = settingsOf(bot);
+  const s = settingsOf(bot, preferredLanguages(c));
 
   const r = await fetch(`${XAI}/realtime/client_secrets`, {
     method: 'POST',
@@ -266,7 +276,8 @@ voiceApi.post('/session', async (c) => {
     audio: {
       input: {
         format: { type: 'audio/pcm', rate: SAMPLE_RATE },
-        transcription: { model: 'grok-transcribe', ...(s.language !== 'auto' ? { language_hint: s.language } : {}) },
+        // Always the chosen language: without a hint the provider detects one by itself.
+        transcription: { model: 'grok-transcribe', language_hint: s.language },
       },
       output: { format: { type: 'audio/pcm', rate: SAMPLE_RATE }, speed: s.speed },
     },
@@ -290,6 +301,7 @@ voiceApi.post('/session', async (c) => {
     language: s.language,
     tools: VOICE_TOOLS,
     session,
+    pricing: RATES,
   });
 });
 
@@ -377,7 +389,7 @@ async function summarizeCall(botName: string, transcript: { role: string; text: 
 
 voiceApi.post('/end', async (c) => {
   const user = c.get('user');
-  const { botId, callId, transcript, error } = await c.req.json<{ botId: string; callId: string; transcript?: { role: string; text: string }[]; error?: string }>();
+  const { botId, callId, transcript, error, textItems } = await c.req.json<{ botId: string; callId: string; transcript?: { role: string; text: string }[]; error?: string; textItems?: number }>();
   const bot = ownBot(user.id, botId);
   if (!bot) return c.json({ error: 'not found' }, 404);
   const call = calls.get(callId);
@@ -389,8 +401,12 @@ voiceApi.post('/end', async (c) => {
     .filter((t) => t && (t.role === 'user' || t.role === 'assistant') && typeof t.text === 'string' && t.text.trim())
     .slice(-200)
     .map((t) => ({ role: t.role as 'user' | 'assistant', text: clip(t.text.trim(), 2000) }));
-  const base = error ? `Voice call ended · ${fmtDuration(durationMs)} · ${clip(error, 120)}` : `Voice call ended · ${fmtDuration(durationMs)}`;
-  const record: VoiceCallRecord = { id: callId, phase: 'ended', durationMs, transcript: lines, tasks: call.tasks };
+  // The browser counts the text notes it sent into the call; the count only feeds the estimate, so it is kept within reason.
+  const notes = Number.isFinite(Number(textItems)) ? Math.min(500, Math.max(0, Math.floor(Number(textItems)))) : 0;
+  const costUsd = voiceCost(durationMs, notes, RATES);
+  const ended = `Voice call ended · ${fmtDuration(durationMs)} · ${formatCost(costUsd)}`;
+  const base = error ? `${ended} · ${clip(error, 120)}` : ended;
+  const record: VoiceCallRecord = { id: callId, phase: 'ended', durationMs, costUsd, transcript: lines, tasks: call.tasks };
   const row = appendRow(bot.id, 'event', callEvent(base, record));
   emitBot(bot.id);
 
@@ -416,9 +432,9 @@ voiceApi.post('/preview', async (c) => {
   const user = c.get('user');
   const p = await c.req.json<{ botId?: string; voice?: string; speed?: number; language?: string; text?: string; codec?: 'mp3' | 'pcm' }>().catch(() => ({} as any));
   const bot = ownBot(user.id, p.botId);
-  const s = bot ? settingsOf(bot) : { voice: 'luna', speed: 1, language: 'auto' };
+  const s = bot ? settingsOf(bot, preferredLanguages(c)) : { voice: 'luna', speed: 1, language: resolveLanguage(undefined, preferredLanguages(c)) };
   const voice = String(p.voice || s.voice).slice(0, 80);
-  const language = p.language && langName(p.language) ? p.language : s.language;
+  const language = p.language && languageName(p.language) ? resolveLanguage(p.language, []) : s.language;
   const text = String(p.text || `Hi, I'm ${bot?.name ?? 'your Bot'}. This is how I'll sound when we talk.`).slice(0, 400);
   const codec = p.codec === 'pcm' ? 'pcm' : 'mp3';
   const r = await fetch(`${XAI}/tts`, {
@@ -445,8 +461,9 @@ voiceApi.post('/stt', async (c) => {
   if (file.size < 200) return c.json({ text: '' });
   const out = new FormData();
   out.append('model', STT_MODEL);
-  const lang = String(form?.get('language') ?? '');
-  if (lang && lang !== 'auto' && /^[a-z]{2}$/.test(lang)) out.append('language', lang);
+  // Dictation always names its language (the bot's, or the closest to the browser's): left out, the
+  // provider detects one by itself. It takes the language without its region ("es-ES" goes as "es").
+  out.append('language', sttLanguage(resolveLanguage(form?.get('language'), preferredLanguages(c))));
   out.append('file', file, file.name || 'dictation.webm'); // must be last
   const r = await fetch(`${XAI}/stt`, { method: 'POST', headers: xaiHeaders(), body: out, signal: AbortSignal.timeout(60_000) }).catch(() => null);
   if (!r?.ok) {

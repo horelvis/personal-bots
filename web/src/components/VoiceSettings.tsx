@@ -4,10 +4,14 @@ import { useStore } from '../store';
 import { voiceApi, type VoiceOptions } from '../voice/api';
 import { endCall, isCallActive, previewVoice, startCall, useVoice } from '../voice/call';
 import { Icon } from './Icon';
+import { LANGUAGES, resolveLanguage } from '@shared/lib/voice-language';
+
+/** The bot's language as it is used: its own, or (never chosen yet) the closest to this browser's. */
+export const botLanguage = (bot: Pick<Bot, 'voiceLanguage'>) => resolveLanguage(bot.voiceLanguage, navigator.languages ?? []);
 
 const FALLBACK: VoiceOptions = {
   voices: ['ara', 'eve', 'leo', 'luna', 'rex', 'sal'].map((id) => ({ id, name: id[0].toUpperCase() + id.slice(1) })),
-  languages: [{ code: 'auto', name: 'Auto-detect' }, { code: 'en', name: 'English' }],
+  languages: LANGUAGES,
   speeds: [0.7, 0.85, 1, 1.15, 1.3, 1.5],
 };
 
@@ -60,7 +64,7 @@ export function VoiceSettings({ bot }: { bot: Bot }) {
   const preview = async () => {
     if (previewing) return;
     setPreviewing(true); setError(null);
-    try { await previewVoice({ botId: bot.id, voice: bot.voice, speed: bot.voiceSpeed, language: bot.voiceLanguage }); }
+    try { await previewVoice({ botId: bot.id, voice: bot.voice, speed: bot.voiceSpeed, language: botLanguage(bot) }); }
     catch (e) { setError((e as Error).message || 'Preview unavailable'); }
     finally { setPreviewing(false); }
   };
@@ -83,7 +87,7 @@ export function VoiceSettings({ bot }: { bot: Bot }) {
       </div>
       <div className="panel-row panel-row--setting">
         <span>Language</span>
-        <NativeSelect label="Language" value={bot.voiceLanguage} options={opts.languages.map((l) => ({ value: l.code, label: l.name }))} onChange={(voiceLanguage) => save({ voiceLanguage })} />
+        <NativeSelect label="Language" value={botLanguage(bot)} options={opts.languages.filter((l) => l.code !== 'auto').map((l) => ({ value: l.code, label: l.name }))} onChange={(voiceLanguage) => save({ voiceLanguage })} />
       </div>
       <button type="button" className={`panel-row panel-row--action panel-row--call${inCall ? ' is-active' : ''}`} onClick={() => (inCall ? endCall() : startCall(bot.id))}>
         <Icon name="voice_a" size={14} opacity={inCall ? 1 : 0.56} /> {inCall ? 'End voice chat' : 'Start voice chat'}

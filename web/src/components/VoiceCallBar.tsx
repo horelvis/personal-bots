@@ -3,6 +3,7 @@ import { BotAvatarFor } from '../avatar/BotAvatar';
 import { botVars } from '../lib/colors';
 import { useStore } from '../store';
 import { callLevels, endCall, toggleMute, useVoice } from '../voice/call';
+import { formatCost, voiceCost } from '@shared/lib/voice-cost';
 
 function MicGlyph({ off }: { off?: boolean }) {
   return (
@@ -97,6 +98,11 @@ export function VoiceCallBar() {
           <div className="vcall__title">
             <span className="vcall__name">{bot.name}</span>
             {v.status === 'live' && v.startedAt && <span className="vcall__time">{fmt(now - v.startedAt)}</span>}
+            {v.status === 'live' && v.startedAt && v.pricing && (
+              <span className="vcall__time vcall__cost" title={`Estimated cost so far: $${v.pricing.perMinute.toFixed(2)} per minute of call${v.pricing.perTextItem ? `, plus $${v.pricing.perTextItem} per note from the bot's work` : ''}. The provider's bill is the real figure.`}>
+                {formatCost(voiceCost(now - v.startedAt, v.textItems, v.pricing))}
+              </span>
+            )}
           </div>
           <div className={`vcall__status${working && !v.speaking && !v.listening ? ' vcall__shimmer' : ''}`} aria-live="polite">
             {status}

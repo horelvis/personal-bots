@@ -6,6 +6,7 @@ import { Icon } from './Icon';
 import { Menu } from './Menu';
 import { endCall, isCallActive, startCall, useVoice } from '../voice/call';
 import { useDictation } from '../voice/dictation';
+import { resolveLanguage } from '@shared/lib/voice-language';
 
 const MAX_H = 200;
 const drafts = new Map<string, string>();
@@ -71,7 +72,7 @@ export function Composer({ bot, running }: { bot: Bot; running: boolean }) {
       return before + pre + t + post + after;
     });
   };
-  const dictation = useDictation(insertText, setError, bot.voiceLanguage);
+  const dictation = useDictation(insertText, setError, resolveLanguage(bot.voiceLanguage, navigator.languages ?? []));
   const inCall = useVoice((s) => isCallActive(s) && s.botId === bot.id);
 
   const hasText = text.trim().length > 0;

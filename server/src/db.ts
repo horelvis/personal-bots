@@ -145,6 +145,7 @@ function addColumn(table: string, col: string, ddl: string) {
 }
 addColumn('bots', 'voice', "TEXT NOT NULL DEFAULT 'luna'");
 addColumn('bots', 'voice_speed', 'REAL NOT NULL DEFAULT 1');
+// 'auto' here only means "not chosen yet": a language is picked and saved the first time it is needed (lib/voice-language.ts).
 addColumn('bots', 'voice_language', "TEXT NOT NULL DEFAULT 'auto'");
 // Hermes engine: per-bot model choice, which engine runs the bot ('primary' = the existing agent,
 // 'managed' = a gateway we start), and the managed gateway's port.

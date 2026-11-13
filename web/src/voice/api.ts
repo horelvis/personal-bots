@@ -13,6 +13,8 @@ export interface VoiceSession {
   language: string;
   tools: unknown[];
   session: Record<string, unknown>;
+  /** Rates the cost estimate is made from, in US dollars. */
+  pricing?: { perMinute: number; perTextItem: number };
 }
 
 export interface VoiceOptions { voices: VoiceOption[]; languages: { code: string; name: string }[]; speeds: number[] }
@@ -36,10 +38,10 @@ export const voiceApi = {
   }).catch((e) => { optionsPromise = null; throw e; })),
   session: (botId: string) => post<VoiceSession>('/session', { botId }),
   tool: (botId: string, callId: string, name: string, args: unknown) => post<{ output: string; taskSeq?: number }>('/tool', { botId, callId, name, args }),
-  end: (botId: string, callId: string, transcript: { role: 'user' | 'assistant'; text: string }[], error?: string) => post<{ ok: true }>('/end', { botId, callId, transcript, error }),
+  end: (botId: string, callId: string, transcript: { role: 'user' | 'assistant'; text: string }[], error?: string, textItems = 0) => post<{ ok: true }>('/end', { botId, callId, transcript, error, textItems }),
   /** Best-effort end on tab close. */
-  endBeacon: (botId: string, callId: string, transcript: { role: 'user' | 'assistant'; text: string }[]) => {
-    try { navigator.sendBeacon('/api/voice/end', new Blob([JSON.stringify({ botId, callId, transcript })], { type: 'application/json' })); } catch { /* ignore */ }
+  endBeacon: (botId: string, callId: string, transcript: { role: 'user' | 'assistant'; text: string }[], textItems = 0) => {
+    try { navigator.sendBeacon('/api/voice/end', new Blob([JSON.stringify({ botId, callId, transcript, textItems })], { type: 'application/json' })); } catch { /* ignore */ }
   },
   async preview(p: { botId: string; voice?: string; speed?: number; language?: string; text?: string }): Promise<Int16Array> {
     const res = await fetch('/api/voice/preview', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...p, codec: 'pcm' }) });

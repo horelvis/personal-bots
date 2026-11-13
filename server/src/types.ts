@@ -139,6 +139,8 @@ export interface VoiceCallRecord {
   id: string;
   phase: 'started' | 'ended';
   durationMs?: number;
+  /** Estimated cost of the call in US dollars, from the voice provider's published rates. */
+  costUsd?: number;
   summary?: string;
   transcript?: { role: 'user' | 'assistant'; text: string }[];
   tasks?: string[];
