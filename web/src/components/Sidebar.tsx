@@ -1,5 +1,5 @@
 import { memo, useCallback, useState } from 'react';
-import { useConfigUI } from '../configStore';
+import { resolvedTheme, useConfigUI } from '../configStore';
 import { TasksIsland } from './config/TasksView';
 import type { Bot } from '@shared/types';
 import { BotAvatarFor } from '../avatar/BotAvatar';
@@ -51,6 +51,7 @@ export function Sidebar() {
   const live = useStore((s) => s.live);
   const storeSelectedBotId = useStore((s) => s.selectedBotId);
   const inTasks = useConfigUI((s) => s.view === 'tasks');
+  const dark = useConfigUI((s) => resolvedTheme(s.theme) === 'dark');
   const selectedBotId = inTasks ? null : storeSelectedBotId; // nothing highlighted while the Tasks view is open
   const user = useStore((s) => s.user);
   const collapsed = useStore((s) => s.sidebarCollapsed);
@@ -143,6 +144,11 @@ export function Sidebar() {
               </Menu>
             )}
           </div>
+        )}
+        {!collapsed && (
+          <button type="button" className="icon-btn icon-btn--bordered" onClick={() => useConfigUI.getState().toggleTheme()} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} title={dark ? 'Light mode' : 'Dark mode'}>
+            <Icon name={dark ? 'sun' : 'moon'} />
+          </button>
         )}
         <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setModal('apps')} aria-label="Connect apps" title="Connect apps">
           <Icon name="apps" />

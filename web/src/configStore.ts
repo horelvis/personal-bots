@@ -21,6 +21,8 @@ interface ConfigUI {
   closeAppSettings(): void;
   setView(v: 'chat' | 'tasks'): void;
   setTheme(t: Theme): void;
+  /** Switch between light and dark, whatever the setting was. From "System" it goes to the opposite of what the device shows. */
+  toggleTheme(): void;
   bump(key: string): void;
 }
 
@@ -31,8 +33,11 @@ const readTheme = (): Theme => {
 
 const darkQuery = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
+/** What a theme setting looks like right now: "System" follows the device. */
+export const resolvedTheme = (t: Theme): 'light' | 'dark' => (t === 'system' ? (darkQuery?.matches ? 'dark' : 'light') : t);
+
 export function applyTheme(t: Theme) {
-  const resolved = t === 'system' ? (darkQuery?.matches ? 'dark' : 'light') : t;
+  const resolved = resolvedTheme(t);
   document.documentElement.dataset.theme = resolved;
   document.documentElement.style.colorScheme = resolved;
 }
@@ -53,6 +58,7 @@ export const useConfigUI = create<ConfigUI>((set, get) => ({
     applyTheme(theme);
     set({ theme });
   },
+  toggleTheme: () => get().setTheme(resolvedTheme(get().theme) === 'dark' ? 'light' : 'dark'),
   bump: (key) => set({ versions: { ...get().versions, [key]: (get().versions[key] ?? 0) + 1 } }),
 }));
 
