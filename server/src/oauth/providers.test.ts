@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import crypto from 'node:crypto';
-import { authUrl, configuredProviders, exchangeCode, fetchProfile, newState, pkcePair, sameState, scopesFor, stateBelongsTo, type OAuthProvider, type ProviderDefinition } from './providers.js';
+import { authUrl, configuredProviders, exchangeCode, fetchProfile, newState, pkcePair, refreshTokens, sameState, scopesFor, servicesCovered, stateBelongsTo, type OAuthProvider, type ProviderDefinition } from './providers.js';
 
 const env = { GOOGLE_CLIENT_ID: 'cid.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'shh' };
 const google = () => configuredProviders(env).find((p) => p.id === 'google')!;
@@ -146,4 +146,49 @@ test('a provider can gather its profile from more than one call', async (t) => {
   };
   assert.deepEqual(await fetchProfile(twoCalls, 'at'), { subject: '7', email: 'ana@acme.example', name: 'Ana' });
   assert.deepEqual(seen.sort(), ['https://acme.example/me Bearer at', 'https://acme.example/me/emails Bearer at']);
+});
+
+test('Google offers Gmail and Calendar as services, each with its own scopes', () => {
+  const p = google();
+  assert.deepEqual(Object.keys(p.services).sort(), ['calendar', 'gmail']);
+  assert.deepEqual(scopesFor(p, ['gmail']), ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send']);
+  assert.deepEqual(scopesFor(p, ['calendar']), ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.events']);
+  assert.deepEqual(scopesFor(p, []), ['openid', 'email', 'profile']);
+});
+
+test('connecting a service asks for a refresh token and keeps what was granted before; sign-in does not', () => {
+  const p = google();
+  const base = { redirectUri: 'http://localhost:8787/api/auth/google/callback', state: 's' };
+  const connect = new URL(authUrl(p, { ...base, scopes: scopesFor(p, ['gmail']), connect: true }));
+  assert.equal(connect.searchParams.get('access_type'), 'offline');
+  assert.equal(connect.searchParams.get('include_granted_scopes'), 'true');
+  assert.equal(connect.searchParams.get('prompt'), 'consent');
+  const signIn = new URL(authUrl(p, { ...base, scopes: scopesFor(p, []) }));
+  assert.equal(signIn.searchParams.has('access_type'), false);
+  assert.equal(signIn.searchParams.get('prompt'), 'select_account');
+});
+
+test('a service counts as granted only when every one of its scopes was', () => {
+  const p = google();
+  const gmail = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send';
+  assert.deepEqual(servicesCovered(p, `openid email ${gmail}`), ['gmail']);
+  assert.deepEqual(servicesCovered(p, `${gmail} https://www.googleapis.com/auth/calendar.events`).sort(), ['calendar', 'gmail']);
+  assert.deepEqual(servicesCovered(p, 'openid https://www.googleapis.com/auth/gmail.readonly'), []);
+  assert.deepEqual(servicesCovered(p, ''), []);
+});
+
+test('a refresh trades the refresh token for a new access token and keeps the old refresh token when none comes back', async (t) => {
+  let sent = new URLSearchParams();
+  t.mock.method(globalThis, 'fetch', async (_url: any, init: any) => { sent = new URLSearchParams(String(init.body)); return answer({ access_token: 'new-at', expires_in: 3599, scope: 'a b' }); });
+  assert.deepEqual(await refreshTokens(acme, 'old-rt'), { accessToken: 'new-at', refreshToken: 'old-rt', expiresIn: 3599, scope: 'a b' });
+  assert.equal(sent.get('grant_type'), 'refresh_token');
+  assert.equal(sent.get('refresh_token'), 'old-rt');
+  assert.equal(sent.get('client_secret'), 'acme-secret');
+});
+
+test('a refresh the provider refuses says whether the grant is gone for good', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => answer({ error: 'invalid_grant' }, 400));
+  await assert.rejects(refreshTokens(acme, 'old-rt'), (e: any) => e.revoked === true && /Acme/.test(e.message));
+  t.mock.method(globalThis, 'fetch', async () => answer({ error: 'temporarily_unavailable' }, 503));
+  await assert.rejects(refreshTokens(acme, 'old-rt'), (e: any) => e.revoked === false);
 });

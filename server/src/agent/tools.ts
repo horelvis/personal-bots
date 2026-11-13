@@ -11,6 +11,8 @@ import { setCheckins } from '../proactive.js';
 import { createRoom, postToRoom } from './rooms.js';
 import type { ActivityKind } from '../types.js';
 import { Cron } from 'croner';
+import { googleTools } from './google-tools.js';
+import { oauthProvider } from '../oauth/registry.js';
 
 export interface ToolCtx {
   userId: string;
@@ -29,13 +31,19 @@ export interface ToolResult {
 
 type Impl = (args: any, ctx: ToolCtx) => Promise<ToolResult>;
 
-interface ToolDef {
+export interface ToolDef {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
   activity: ActivityKind;
   label: string;
   impl: Impl;
+  /**
+   * Set on tools that act for the user outside the app (send, create, change, delete): the call
+   * waits for the user's approval card. `title` reads "<App>: <what it does>"; `toolkit` names the app.
+   */
+  approval?: { toolkit: string; title: string; needs?: { provider: string; service: string } };
+  // `needs`: the connection the tool works through. Without it the user is not asked to approve a call that cannot run.
 }
 
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -323,6 +331,8 @@ export const TOOLS: ToolDef[] = [
       return { output: `Asked the user to connect ${info.name}. Stop here; you'll be told when it's connected.`, endTurn: true };
     },
   },
+  // Gmail and Calendar exist for the bots only when this server has a Google client to connect them with.
+  ...(oauthProvider('google') ? googleTools : []),
 ];
 
 export const toolMap = new Map(TOOLS.map((t) => [t.name, t]));
@@ -332,7 +342,14 @@ export const toolMap = new Map(TOOLS.map((t) => [t.name, t]));
 export type Decision = 'allow' | 'ask' | 'block';
 
 export function policyFor(userId: string, toolName: string, args: any): { decision: Decision; key: string; toolkit?: string; title: string } {
-  if (toolMap.has(toolName)) return { decision: 'allow', key: toolName, title: toolName };
+  const own = toolMap.get(toolName);
+  if (own?.approval) {
+    // Our own tools that act outside the app follow the same per-tool policy as connected-app writes.
+    const p = db.prepare('SELECT mode FROM policies WHERE user_id=? AND tool=?').get(userId, toolName) as any;
+    const mode = p?.mode ?? 'needs_approval';
+    return { decision: mode === 'blocked' ? 'block' : mode === 'always_allow' ? 'allow' : 'ask', key: toolName, toolkit: own.approval.toolkit, title: own.approval.title };
+  }
+  if (own) return { decision: 'allow', key: toolName, title: toolName };
   const slugs = innerToolSlugs(toolName, args);
   if (!slugs.length) {
     // Composio's sandbox can run app actions from code, which would slip past the per-action

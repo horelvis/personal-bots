@@ -22,6 +22,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export interface AppsResponse { apps: Toolkit[]; connected: string[]; categories: string[]; total: number; available?: boolean }
 export interface SignInProvider { id: string; name: string }
+export interface ProviderConnections { id: string; name: string; email: string | null; services: { id: string; name: string; connected: boolean }[] }
 
 export interface RoomMember { id: string; name: string; label: string; avatarShape: string; avatarColor: string }
 
@@ -51,6 +52,10 @@ export const api = {
   apps: (search = '', category = '') => req<AppsResponse>('GET', `/apps?search=${encodeURIComponent(search)}&category=${encodeURIComponent(category)}`),
   connect: (slug: string, botId?: string, seq?: number) => req<{ redirectUrl: string }>('POST', `/apps/${slug}/connect`, { botId, seq }),
   disconnect: (slug: string) => req<{ ok: true }>('DELETE', `/apps/${slug}`),
+  connections: () => req<{ providers: ProviderConnections[] }>('GET', '/connections'),
+  /** Where to send the browser to connect a service; it comes back to the app when done. */
+  connectServiceUrl: (provider: string, service: string) => `/api/connections/${encodeURIComponent(provider)}/${encodeURIComponent(service)}/connect`,
+  disconnectService: (provider: string, service: string) => req<{ ok: true }>('DELETE', `/connections/${encodeURIComponent(provider)}/${encodeURIComponent(service)}`),
 
   roomMembers: (id: string) => req<{ members: RoomMember[] }>('GET', `/rooms/${id}/members`),
   setRoomMembers: (id: string, botIds: string[]) => req<{ ok: true; members: string[] }>('PUT', `/rooms/${id}/members`, { botIds }),

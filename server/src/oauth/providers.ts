@@ -34,6 +34,13 @@ export interface OAuthProvider {
   signInScopes: string[];
   /** Extra query parameters this provider wants on the authorize URL. */
   authParams?: Record<string, string>;
+  /**
+   * Query parameters for connecting a service instead of signing in (they replace `authParams`):
+   * what makes the provider hand out a refresh token and add to what was granted before.
+   */
+  connectParams?: Record<string, string>;
+  /** Where a token is handed back when the last service is disconnected. */
+  revokeUrl?: string;
   /** Send a PKCE challenge with the sign-in and its verifier with the code. */
   pkce?: boolean;
   /** Where the client secret goes in the code exchange: the form body (default) or an HTTP Basic header. */
@@ -63,10 +70,13 @@ const CATALOG: ProviderDefinition[] = [
     userinfoUrl: 'https://openidconnect.googleapis.com/v1/userinfo',
     signInScopes: ['openid', 'email', 'profile'],
     authParams: { prompt: 'select_account' },
-    // Google services go here, for example:
-    //   gmail: { name: 'Gmail', scopes: ['https://www.googleapis.com/auth/gmail.modify'] },
-    //   calendar: { name: 'Google Calendar', scopes: ['https://www.googleapis.com/auth/calendar'] },
-    services: {},
+    connectParams: { access_type: 'offline', include_granted_scopes: 'true', prompt: 'consent' },
+    revokeUrl: 'https://oauth2.googleapis.com/revoke',
+    // More Google services (Drive, Contacts...) go here, each with the narrowest scopes that do the job.
+    services: {
+      gmail: { name: 'Gmail', scopes: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send'] },
+      calendar: { name: 'Google Calendar', scopes: ['https://www.googleapis.com/auth/calendar.events'] },
+    },
     profile(raw) {
       if (!raw || typeof raw !== 'object') return null;
       const verified = raw.email_verified === true || raw.email_verified === 'true';
@@ -113,9 +123,15 @@ export function pkcePair(): { verifier: string; challenge: string } {
   return { verifier, challenge: crypto.createHash('sha256').update(verifier).digest('base64url') };
 }
 
-export function authUrl(provider: OAuthProvider, a: { redirectUri: string; state: string; scopes: string[]; codeChallenge?: string }): string {
+/** The services of `provider` whose scopes are all among the granted ones (a space-separated list, as providers return it). */
+export function servicesCovered(provider: OAuthProvider, grantedScopes: string): string[] {
+  const granted = new Set(grantedScopes.split(/\s+/).filter(Boolean));
+  return Object.entries(provider.services).filter(([, s]) => s.scopes.length > 0 && s.scopes.every((x) => granted.has(x))).map(([id]) => id);
+}
+
+export function authUrl(provider: OAuthProvider, a: { redirectUri: string; state: string; scopes: string[]; codeChallenge?: string; connect?: boolean }): string {
   const u = new URL(provider.authorizeUrl);
-  for (const [k, v] of Object.entries(provider.authParams ?? {})) u.searchParams.set(k, v);
+  for (const [k, v] of Object.entries((a.connect ? provider.connectParams : provider.authParams) ?? {})) u.searchParams.set(k, v);
   u.searchParams.set('client_id', provider.clientId);
   u.searchParams.set('redirect_uri', a.redirectUri);
   u.searchParams.set('response_type', 'code');
@@ -160,6 +176,40 @@ export async function exchangeCode(provider: OAuthProvider, code: string, redire
     throw new Error(`${provider.name} refused the sign-in code (${res.status}${data?.error ? ` ${String(data.error).slice(0, 60)}` : ''})`);
   }
   return { accessToken: String(data.access_token), refreshToken: data.refresh_token ? String(data.refresh_token) : undefined, expiresIn: Number(data.expires_in) || undefined, scope: data.scope ? String(data.scope) : undefined };
+}
+
+/** The provider said no to a refresh. `revoked` is true when the grant itself is gone and the person must connect again. */
+export class RefreshError extends Error {
+  constructor(message: string, public revoked: boolean) { super(message); }
+}
+
+/** A new access token from a refresh token. Providers that do not rotate refresh tokens send none back: the old one stays. */
+export async function refreshTokens(provider: OAuthProvider, refreshToken: string): Promise<OAuthTokens> {
+  const basic = provider.tokenAuth === 'basic';
+  const form = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: provider.clientId });
+  if (!basic) form.set('client_secret', provider.clientSecret);
+  const res = await fetch(provider.tokenUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      accept: 'application/json',
+      ...(basic ? { authorization: `Basic ${Buffer.from(`${provider.clientId}:${provider.clientSecret}`).toString('base64')}` } : {}),
+    },
+    body: form,
+    signal: AbortSignal.timeout(15_000),
+  });
+  const data: any = await res.json().catch(() => null);
+  if (!res.ok || !data?.access_token) {
+    const code = data?.error ? String(data.error).slice(0, 60) : '';
+    throw new RefreshError(`${provider.name} refused to renew access (${res.status}${code ? ` ${code}` : ''})`, code === 'invalid_grant');
+  }
+  return { accessToken: String(data.access_token), refreshToken: data.refresh_token ? String(data.refresh_token) : refreshToken, expiresIn: Number(data.expires_in) || undefined, scope: data.scope ? String(data.scope) : undefined };
+}
+
+/** Hand a token back to the provider. Best effort: the answer does not matter to us. */
+export async function revokeToken(provider: OAuthProvider, token: string): Promise<void> {
+  if (!provider.revokeUrl) return;
+  await fetch(provider.revokeUrl, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token }), signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
 }
 
 /** Who the access token belongs to, or null when the provider gives no verified email. */

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Toolkit } from '@shared/types';
 import { BotAvatarFor } from '../../avatar/BotAvatar';
-import { api, openPopup, type AppsResponse } from '../../lib/api';
+import { api, openPopup, type AppsResponse, type ProviderConnections } from '../../lib/api';
 import { useStore } from '../../store';
 import { Icon } from '../Icon';
 import { Menu } from '../Menu';
@@ -67,6 +67,53 @@ function AppRow({ app, onChanged }: { app: Toolkit; onChanged: () => void }) {
   );
 }
 
+/** One service of a provider connected through the server's own OAuth client (Gmail, Calendar...). */
+function ServiceRow({ provider, service, onChanged }: { provider: ProviderConnections; service: ProviderConnections['services'][number]; onChanged: () => void }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'confirm'>('idle');
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setState('idle'); }, [service.connected]);
+
+  // The provider's consent screen takes over the page and returns to the app when done.
+  const connect = () => { setState('busy'); window.location.href = api.connectServiceUrl(provider.id, service.id); };
+  const disconnect = async () => {
+    if (state !== 'confirm') { setState('confirm'); return; }
+    setState('busy');
+    try { await api.disconnectService(provider.id, service.id); onChanged(); } catch (e) { setError((e as Error).message); setState('idle'); }
+  };
+
+  return (
+    <div className="app-row">
+      <ToolkitLogo name={service.name} />
+      <span className="app-row__text">
+        <span className="app-row__name">{service.name}</span>
+        {error ? <span className="app-row__error">{error}</span> : <span className="app-row__desc">{service.connected && provider.email ? provider.email : `Your own ${provider.name} account`}</span>}
+      </span>
+      {service.connected ? (
+        <button type="button" className={`app-row__connected${state === 'confirm' ? ' is-confirm' : ''}`} onClick={disconnect} onMouseLeave={() => state === 'confirm' && setState('idle')} disabled={state === 'busy'}>
+          {state === 'confirm' ? 'Disconnect?' : <><Icon name="check" size={12} opacity={0.56} /><span className="app-row__connected-label">Connected</span><span className="app-row__disconnect-label">Disconnect</span></>}
+        </button>
+      ) : (
+        <button type="button" className="app-row__connect" onClick={connect} disabled={state === 'busy'}>{state === 'busy' ? 'Opening…' : 'Connect'}</button>
+      )}
+    </div>
+  );
+}
+
+function ProviderSections({ providers, onChanged }: { providers: ProviderConnections[]; onChanged: () => void }) {
+  return (
+    <>
+      {providers.map((p) => (
+        <section className="apps-section" key={p.id}>
+          <div className="apps-section__head"><span className="apps-section__title">{p.name}</span></div>
+          <div className="app-grid">
+            {p.services.map((s) => <ServiceRow key={s.id} provider={p} service={s} onChanged={onChanged} />)}
+          </div>
+        </section>
+      ))}
+    </>
+  );
+}
+
 function Grid({ apps, onChanged }: { apps: Toolkit[]; onChanged: () => void }) {
   return (
     <div className="app-grid">
@@ -102,6 +149,9 @@ export function ConnectAppsModal() {
   const [error, setError] = useState<string | null>(null);
   const [more, setMore] = useState(false);
   const [bump, setBump] = useState(0);
+  const [providers, setProviders] = useState<ProviderConnections[]>([]);
+  // Services of the server's own OAuth providers; they do not depend on the app catalog.
+  useEffect(() => { let alive = true; api.connections().then((r) => { if (alive) setProviders(r.providers); }).catch(() => { if (alive) setProviders([]); }); return () => { alive = false; }; }, [bump]);
   const refresh = useCallback(() => setBump((n) => n + 1), []);
 
   useEffect(() => { const t = setTimeout(() => setDebounced(search.trim()), 200); return () => clearTimeout(t); }, [search]);
@@ -143,7 +193,7 @@ export function ConnectAppsModal() {
 
   let body: React.ReactNode;
   if (error) body = <div className="apps-empty">Couldn’t load apps. {error}</div>;
-  else if (data?.available === false) body = <div className="apps-empty">Connected apps are not set up on this server.</div>;
+  else if (data?.available === false) body = providers.length ? null : <div className="apps-empty">Connected apps are not set up on this server.</div>;
   else if (!data && loading) body = <div className="apps-empty">Loading apps…</div>;
   else if (view.kind === 'connected') body = connectedApps.length ? <Section title="Connected" apps={connectedApps} onChanged={refresh} /> : <div className="apps-empty">No apps connected yet.</div>;
   else if (searching || view.kind === 'category') {
@@ -209,7 +259,10 @@ export function ConnectAppsModal() {
           </div>
         </div>
       </div>
-      <div className={`apps-modal__body${loading ? ' is-loading' : ''}`}>{body}</div>
+      <div className={`apps-modal__body${loading ? ' is-loading' : ''}`}>
+        {!debounced && view.kind === 'all' && <ProviderSections providers={providers} onChanged={refresh} />}
+        {body}
+      </div>
     </Modal>
   );
 }

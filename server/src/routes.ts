@@ -14,7 +14,9 @@ import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engi
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { orgo } from './orgo.js';
 import { catalog, composioEnabled, composioReason, ComposioUnavailable, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
-import { authUrl, configuredProviders, exchangeCode, fetchProfile, newState, pkcePair, sameState, scopesFor, stateBelongsTo } from './oauth/providers.js';
+import { authUrl, exchangeCode, fetchProfile, newState, pkcePair, sameState, scopesFor, stateBelongsTo } from './oauth/providers.js';
+import { oauthProvider, oauthProviders } from './oauth/registry.js';
+import { connectedServices, connectionsFor, disconnectService, saveConnection } from './oauth/connections.js';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
 import { deleteEventTrigger } from './triggers.js';
@@ -65,13 +67,12 @@ function findOrCreateUser(email: string, name?: string, preferId?: string) {
 
 // ---------- auth ----------
 
-/** Providers set up with the operator's own OAuth client (see oauth/providers.ts). */
-const oauthProviders = configuredProviders(process.env);
-const oauthProvider = (id: string) => oauthProviders.find((p) => p.id === id);
 /** Google sign-in through a Composio-managed connection: the older way, used only when Google has no OAuth client of its own here. */
 const legacyGoogle = () => composioEnabled && !oauthProvider('google');
 const STATE_COOKIE = 'grokbot_oauth_state';
 const PKCE_COOKIE = 'grokbot_oauth_pkce';
+/** Set when the flow in progress connects a service (its id) instead of signing someone in. */
+const CONNECT_COOKIE = 'grokbot_oauth_connect';
 /** Cookies of a sign-in in progress: only for the auth routes, gone in ten minutes. */
 const flowCookie = () => ({ httpOnly: true, sameSite: 'Lax' as const, secure: env.serverUrl.startsWith('https:'), path: '/api/auth', maxAge: 600 });
 const loginFailed = (c: any, why = 'failed') => c.redirect(`${env.appUrl}/?login=${why}`);
@@ -88,12 +89,9 @@ api.get('/auth/me', (c) => {
 api.get('/auth/:provider/start', async (c, next) => {
   const p = oauthProvider(c.req.param('provider'));
   if (!p) return next();
-  const state = newState(p.id);
-  setCookie(c, STATE_COOKIE, state, flowCookie());
-  const pkce = p.pkce ? pkcePair() : null;
-  if (pkce) setCookie(c, PKCE_COOKIE, pkce.verifier, flowCookie());
-  else deleteCookie(c, PKCE_COOKIE, { path: '/api/auth' });
-  return c.redirect(authUrl(p, { redirectUri: `${env.serverUrl}/api/auth/${p.id}/callback`, state, scopes: scopesFor(p, []), codeChallenge: pkce?.challenge }));
+  // A sign-in: whatever was left of a connect flow must not turn it into one.
+  deleteCookie(c, CONNECT_COOKIE, { path: '/api/auth' });
+  return c.redirect(beginFlow(c, p, scopesFor(p, []), false));
 });
 
 api.get('/auth/:provider/callback', async (c, next) => {
@@ -101,8 +99,11 @@ api.get('/auth/:provider/callback', async (c, next) => {
   if (!p) return next();
   const kept = getCookie(c, STATE_COOKIE);
   const verifier = getCookie(c, PKCE_COOKIE);
+  const service = getCookie(c, CONNECT_COOKIE);
   deleteCookie(c, STATE_COOKIE, { path: '/api/auth' });
   deleteCookie(c, PKCE_COOKIE, { path: '/api/auth' });
+  deleteCookie(c, CONNECT_COOKIE, { path: '/api/auth' });
+  if (service) return finishConnect(c, p, service, kept, verifier);
   const code = c.req.query('code');
   // The state must be the one this browser started with, and one that was made for this provider.
   if (c.req.query('error') || !code || !stateBelongsTo(p.id, kept) || !sameState(kept, c.req.query('state'))) return loginFailed(c);
@@ -121,6 +122,42 @@ api.get('/auth/:provider/callback', async (c, next) => {
     return loginFailed(c, e instanceof UserError ? 'not-allowed' : 'failed');
   }
 });
+
+/** Start an OAuth flow in this browser: remember its state (and verifier), and return where to send the person. */
+function beginFlow(c: any, p: (typeof oauthProviders)[number], scopes: string[], connect: boolean): string {
+  const state = newState(p.id);
+  setCookie(c, STATE_COOKIE, state, flowCookie());
+  const pkce = p.pkce ? pkcePair() : null;
+  if (pkce) setCookie(c, PKCE_COOKIE, pkce.verifier, flowCookie());
+  else deleteCookie(c, PKCE_COOKIE, { path: '/api/auth' });
+  return authUrl(p, { redirectUri: `${env.serverUrl}/api/auth/${p.id}/callback`, state, scopes, codeChallenge: pkce?.challenge, connect });
+}
+
+/**
+ * The end of a connect flow. It signs nobody in: the tokens go to the person who is already signed
+ * in on this browser, which is also the browser that started the flow (the state cookie says so).
+ */
+async function finishConnect(c: any, p: (typeof oauthProviders)[number], service: string, kept: string | undefined, verifier: string | undefined) {
+  const back = (result: string) => c.redirect(`${env.appUrl}/?connect=${result}`);
+  const user = userFromCookieHeader(c.req.header('cookie'));
+  const code = c.req.query('code');
+  if (!user || !Object.hasOwn(p.services, service)) return back('failed');
+  if (c.req.query('error')) return back('cancelled');
+  if (!code || !stateBelongsTo(p.id, kept) || !sameState(kept, c.req.query('state')) || (p.pkce && !verifier)) return back('failed');
+  try {
+    const tokens = await exchangeCode(p, code, `${env.serverUrl}/api/auth/${p.id}/callback`, p.pkce ? verifier : undefined);
+    const profile = await fetchProfile(p, tokens.accessToken);
+    if (!profile) return back('failed');
+    const wanted = [...new Set([...connectedServices(user.id, p.id), service])];
+    const connected = saveConnection(user.id, p, tokens, profile, wanted);
+    hub.emit(user.id, { type: 'connections' });
+    // The person can untick a permission on the provider's screen: then the service is not connected.
+    return back(connected.includes(service) ? `${p.id}.${service}` : 'partial');
+  } catch (e: any) {
+    console.error(`[connect] ${p.id} ${service}: ${e?.message ?? e}`);
+    return back('failed');
+  }
+}
 
 api.get('/auth/google/start', async (c) => {
   if (!legacyGoogle()) return loginFailed(c, 'unavailable');
@@ -534,6 +571,30 @@ api.delete('/apps/:slug', async (c) => {
   } catch (e) {
     return appsProblem(c, e);
   }
+  hub.emit(c.get('user').id, { type: 'connections' });
+  return c.json({ ok: true });
+});
+
+// ---------- services of OAuth providers (Gmail, Calendar...) through the operator's own client ----------
+
+api.get('/connections', (c) => c.json({ providers: connectionsFor(c.get('user').id) }));
+
+// A link the app sends the browser to; it comes back through the provider's callback under /api/auth.
+api.get('/connections/:provider/:service/connect', (c) => {
+  const p = oauthProvider(c.req.param('provider'));
+  const service = c.req.param('service');
+  if (!p || !Object.hasOwn(p.services, service)) return c.json({ error: 'not found' }, 404);
+  // Ask again for what is already connected too: the new grant replaces the old one.
+  const wanted = [...new Set([...connectedServices(c.get('user').id, p.id), service])];
+  setCookie(c, CONNECT_COOKIE, service, flowCookie());
+  return c.redirect(beginFlow(c, p, scopesFor(p, wanted), true));
+});
+
+api.delete('/connections/:provider/:service', async (c) => {
+  const p = oauthProvider(c.req.param('provider'));
+  const service = c.req.param('service');
+  if (!p || !Object.hasOwn(p.services, service)) return c.json({ error: 'not found' }, 404);
+  await disconnectService(c.get('user').id, p.id, service);
   hub.emit(c.get('user').id, { type: 'connections' });
   return c.json({ ok: true });
 });

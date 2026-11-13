@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Hono } from 'hono';
 import { getBotRow } from './store.js';
+import { connectedServices } from './oauth/connections.js';
 import { composioTools } from './composio.js';
 import { mcpToken, primaryBotId } from './engine.js';
 import { claimToolRow, enqueueBotMessage, markSilent, noteToolOutcome, requestApproval, turnDepth } from './agent/loop.js';
@@ -59,6 +60,21 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
   const ctx: ToolCtx = { userId, botId, enqueueBotMessage, depth: turnDepth(botId) };
   try {
     const own = toolMap.get(name);
+    const needs = own?.approval?.needs;
+    // No point asking the user to approve what cannot run: without its connection the tool just says so.
+    const runnable = !needs || connectedServices(userId, needs.provider).includes(needs.service);
+    if (own?.approval && runnable) {
+      // One of our tools that sends or changes something for the user: it waits for the same card.
+      const pol = policyFor(userId, name, args);
+      if (pol.decision === 'block') {
+        noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Not allowed' });
+        return text(DECLINED);
+      }
+      if (pol.decision === 'ask') {
+        const answer = await requestApproval({ userId, botId }, pol, args, rowSeq);
+        if (answer !== 'allow') return text(answer === 'deny' ? DECLINED : SKIPPED);
+      }
+    }
     if (own) {
       const r = await own.impl(args, ctx);
       if (r.endTurn) markSilent(botId);

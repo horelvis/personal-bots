@@ -190,7 +190,24 @@ Three ways in, each independent of the others:
 
 `ALLOWED_EMAILS` limits who can create an account with any of them.
 
-Providers are declared in `server/src/oauth/providers.ts`. Adding one (GitHub, Microsoft...) is one entry there: its endpoints, the scopes that identify a person, and how its profile answer maps to an email. An entry can also say that the provider wants PKCE, takes the client secret in a Basic header, or needs more than one call to find a verified email. It is offered on the sign-in screen as soon as `<ID>_CLIENT_ID` and `<ID>_CLIENT_SECRET` are set. Each provider also lists its *services* (Gmail, Calendar...) with the scopes they need; today none is defined, and sign-in keeps no tokens.
+Providers are declared in `server/src/oauth/providers.ts`. Adding one (GitHub, Microsoft...) is one entry there: its endpoints, the scopes that identify a person, and how its profile answer maps to an email. An entry can also say that the provider wants PKCE, takes the client secret in a Basic header, or needs more than one call to find a verified email. It is offered on the sign-in screen as soon as `<ID>_CLIENT_ID` and `<ID>_CLIENT_SECRET` are set. Each provider also lists its *services* with the scopes they need. Sign-in keeps no tokens.
+
+### Gmail and Google Calendar with your own Google client
+
+With `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` set, **Connect Apps** shows a Google section with Gmail and Google Calendar. Connecting one sends you to Google's consent screen for that service's scopes (`gmail.readonly` and `gmail.send`; `calendar.events`) and uses the same redirect URI as sign-in. In Google Cloud, enable the Gmail API and the Google Calendar API for the project, and add those scopes to the consent screen. While the project is in *Testing*, only its test users can connect.
+
+Every bot then has these tools:
+
+| Tool | What it does | Asks first |
+|---|---|---|
+| `gmail_search`, `gmail_read` | Search mail with Gmail's search syntax; read one message | no |
+| `gmail_send` | Send an email, or reply inside a thread | yes |
+| `calendar_list_events` | Events of the primary calendar in a range | no |
+| `calendar_create_event`, `calendar_update_event`, `calendar_delete_event` | Create, change or delete an event; attendees are notified | yes |
+
+The ones that ask first post the same approval card as connected-app writes (**Allow**, **Always allow**, **Don't allow**). Tokens are stored encrypted with a key derived from `SESSION_SECRET` and never reach the browser or the agents; changing `SESSION_SECRET` means connecting again. Disconnecting the last Google service hands the grant back to Google.
+
+To add another service, add it to `services` in `server/src/oauth/providers.ts` and give the bots tools for it (see `server/src/agent/google-tools.ts`).
 
 ## Models and subscriptions
 
