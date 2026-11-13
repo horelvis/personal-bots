@@ -16,8 +16,14 @@ export const screenIdFor = (display: number) => (display === DEFAULT_DISPLAY ? '
 /** DevTools port of the browser we run on a screen: 9200 + display number (default screen: 9299). */
 export const cdpPortFor = (screenId?: string | null) => 9200 + displayNumber(screenId);
 
-/** VNC port of a screen in the local box: 5900 + display number (default screen: 5999). */
-export const vncPortFor = (screenId?: string | null) => 5900 + displayNumber(screenId);
+/** VNC port of a display inside the local box: 5900 + display number, as VNC servers number them. */
+export const boxVncPort = (display: number) => 5900 + display;
+
+/**
+ * Port on this machine where a local-box screen's VNC server is published: 59000 + display number
+ * (default screen: 59099). Not 5900 + display, which lands in 6000-6063, the ports X11 uses.
+ */
+export const vncPortFor = (screenId?: string | null) => 59000 + displayNumber(screenId);
 
 /** Output of `hq-display list` ("<display> <width> <height>" per line) as screens, default first. */
 export function parseDisplayList(output: string): Screen[] {

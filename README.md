@@ -163,8 +163,10 @@ The server builds the image (`server/box/docker/`) on first use, which takes a f
 
 - Up to four screens, one X display each, dressed like on Orgo. The live viewer, **Take control**, the screen preview and the Library work the same.
 - The browser is Chromium (there is no Chrome for Linux on arm64).
-- Ports are published on `127.0.0.1` only: VNC on 5999-6002, DevTools on 9299-9302.
-- Browser profiles and Library files live in the volume `hq-box-data`; the container itself can be removed at any time (`docker rm -f hq-box`).
+- Ports are published on `127.0.0.1` only: VNC on 59099-59102 (password-protected; the password is derived from `SESSION_SECRET` and never stored in the container's configuration), DevTools on 9299-9302. The container has a network of its own, so other containers cannot reach them.
+- DevTools has no authentication: any program running on your machine can drive the bots' browsers through those ports, as the agents do. Do not use this mode on a machine you share with people you do not trust.
+- Browser profiles and Library files live in the volume `hq-box-data`; the container itself can be removed at any time (`docker rm -f hq-box`). The server replaces it by itself when the image sources or its settings change.
+- Deleting a bot stops its screen.
 - Only the screens and browsers are in the container. The Hermes agents still run on your machine, so their shell commands act on it. The first bot is your existing agent: point its browser at `http://127.0.0.1:9299` in its own Hermes config if you want it to browse on its screen.
 - **Sign in to a subscription** from the Engine panel is not available in this mode (it opens a terminal on the machine the agent runs on).
 

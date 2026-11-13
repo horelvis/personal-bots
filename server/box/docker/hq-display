@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # One X display per bot inside the local box.
 #
-#   hq-display serve        store the VNC password, start display 99 and stay up (the container's command)
+#   hq-display serve        stay up (the container's command); brings display 99 back after a restart
+#   hq-display setpass      read the VNC password from stdin; restarts the VNC servers if it changed
 #   hq-display start <n>    X server, window manager, VNC server and DevTools forwarder for display <n>
 #   hq-display stop <n>     stop everything on display <n>
 #   hq-display list         one line per running display: "<n> <width> <height>"
 #
 # Ports inside the container: VNC on 5900+n; DevTools on 19200+n, forwarded to the browser's own
 # 127.0.0.1:9200+n (Chromium only listens on loopback, and a published port arrives from outside).
+# The VNC password arrives on stdin and lives in a root-only file, so it is not part of the
+# container's configuration.
 set -u
 RUN=/run/hq-display
 LOGS=/var/log/hq-display
@@ -18,6 +21,23 @@ valid() { [[ "${1:-}" =~ ^[0-9]{2,3}$ ]] || { echo "bad display: ${1:-}" >&2; ex
 up() { xdpyinfo -display ":$1" >/dev/null 2>&1; }
 # Each helper is found again by its exact arguments, so a second start is a no-op.
 running() { pgrep -f -- "$1" >/dev/null 2>&1; }
+
+displays() {
+  local lock n
+  for lock in /tmp/.X*-lock; do
+    [ -e "$lock" ] || continue
+    n="${lock#/tmp/.X}"; n="${n%-lock}"
+    up "$n" && echo "$n"
+  done
+}
+
+vnc() {
+  local n="$1"
+  [ -s "$RUN/vncpass" ] || { echo "no VNC password yet (hq-display setpass)" >&2; return 1; }
+  running "x11vnc -display :$n " || \
+    setsid x11vnc -display ":$n" -rfbport "$((5900 + n))" -rfbauth "$RUN/vncpass" -forever -shared \
+      -noxdamage -quiet >"$LOGS/vnc-$n.log" 2>&1 &
+}
 
 start() {
   local n="$1"
@@ -30,9 +50,7 @@ start() {
   # The window manager takes no display argument we could find it by, so it runs under a name of its own.
   running "^hq-wm-$n " || \
     DISPLAY=":$n" setsid bash -c "exec -a hq-wm-$n openbox --sm-disable" >"$LOGS/wm-$n.log" 2>&1 &
-  running "x11vnc -display :$n " || \
-    setsid x11vnc -display ":$n" -rfbport "$((5900 + n))" -rfbauth "$RUN/vncpass" -forever -shared \
-      -noxdamage -quiet >"$LOGS/vnc-$n.log" 2>&1 &
+  vnc "$n" || exit 1
   running "TCP-LISTEN:$((19200 + n))," || \
     setsid socat "TCP-LISTEN:$((19200 + n)),fork,reuseaddr" "TCP:127.0.0.1:$((9200 + n))" >"$LOGS/cdp-$n.log" 2>&1 &
   echo "started $n"
@@ -44,14 +62,34 @@ stop() {
   pkill -f -- "x11vnc -display :$n " 2>/dev/null
   pkill -f -- "^hq-wm-$n " 2>/dev/null
   pkill -f -- "Xvfb :$n " 2>/dev/null
+  rm -f "/tmp/.X$n-lock" "/tmp/.X11-unix/X$n"
   echo "stopped $n"
 }
 
+setpass() {
+  local pass n
+  IFS= read -r pass || true
+  [ -n "$pass" ] || { echo "empty password" >&2; exit 2; }
+  umask 077
+  x11vnc -storepasswd "$pass" "$RUN/vncpass.new" >/dev/null 2>&1 || { echo "could not store the password" >&2; exit 1; }
+  if [ -s "$RUN/vncpass" ] && cmp -s "$RUN/vncpass" "$RUN/vncpass.new"; then
+    rm -f "$RUN/vncpass.new"
+    echo "unchanged"
+    return
+  fi
+  mv -f "$RUN/vncpass.new" "$RUN/vncpass"
+  # Running VNC servers still hold the old password.
+  for n in $(displays); do
+    pkill -f -- "x11vnc -display :$n " 2>/dev/null
+    for _ in $(seq 1 20); do running "x11vnc -display :$n " || break; sleep 0.1; done
+    vnc "$n"
+  done
+  echo "changed"
+}
+
 list() {
-  local lock n dims
-  for lock in /tmp/.X*-lock; do
-    [ -e "$lock" ] || continue
-    n="${lock#/tmp/.X}"; n="${n%-lock}"
+  local n dims
+  for n in $(displays); do
     dims="$(xdpyinfo -display ":$n" 2>/dev/null | awk '/dimensions:/ { split($2, d, "x"); print d[1], d[2]; exit }')"
     [ -n "$dims" ] && echo "$n $dims"
   done
@@ -59,14 +97,14 @@ list() {
 
 case "${1:-}" in
   serve)
-    [ -n "${HQ_VNC_PASSWORD:-}" ] || { echo "HQ_VNC_PASSWORD is not set" >&2; exit 1; }
-    x11vnc -storepasswd "$HQ_VNC_PASSWORD" "$RUN/vncpass" >/dev/null 2>&1
-    chmod 600 "$RUN/vncpass"
-    start 99
+    # After a restart nothing runs, but the password file is still there: bring the first screen back.
+    rm -f /tmp/.X*-lock
+    [ -s "$RUN/vncpass" ] && start 99
     exec sleep infinity
     ;;
+  setpass) setpass ;;
   start) valid "${2:-}"; start "$2" ;;
   stop)  valid "${2:-}"; stop "$2" ;;
   list)  list ;;
-  *) echo "usage: hq-display serve | start <n> | stop <n> | list" >&2; exit 2 ;;
+  *) echo "usage: hq-display serve | setpass | start <n> | stop <n> | list" >&2; exit 2 ;;
 esac

@@ -101,7 +101,11 @@ export function ensureComputer(userId: string): Promise<string> {
       if (env.dockerBox) {
         // The first start builds the image, which takes minutes; later ones take a second.
         if (rowFor(userId).status !== 'running') setStatus(userId, 'starting');
-        await dockerBox.ensure();
+        if (await dockerBox.ensure()) {
+          // A container that just started has bare screens: dress them again on next use.
+          dressing.clear();
+          verified.clear();
+        }
         if (rowFor(userId).status !== 'running') setStatus(userId, 'running');
         checkedAt = Date.now();
         return id;
@@ -269,6 +273,10 @@ export async function releaseScreen(botId: string): Promise<void> {
   verified.delete(botId);
   if (mine.screen_id !== 'default') {
     try { await undressScreen(botId, mine.screen_id); } catch (e: any) { console.warn(`[computer] undress failed: ${e?.message ?? e}`); }
+    // An Orgo screen is kept for the next bot; a display in the local box costs memory, so it stops.
+    if (env.dockerBox) {
+      try { await dockerBox.deleteScreen(mine.screen_id); } catch (e: any) { console.warn(`[computer] could not stop ${mine.screen_id}: ${e?.message ?? e}`); }
+    }
   }
   hub.emit(mine.user_id, { type: 'computer', state: computerState(mine.user_id) });
 }

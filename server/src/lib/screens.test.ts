@@ -20,8 +20,9 @@ test('screen ids round-trip through display numbers', () => {
 test('ports follow the display number', () => {
   assert.equal(cdpPortFor('default'), 9299);
   assert.equal(cdpPortFor('screen-100'), 9300);
-  assert.equal(vncPortFor('default'), 5999);
-  assert.equal(vncPortFor('screen-102'), 6002);
+  // Host ports stay clear of 6000-6063, which X11 uses.
+  assert.equal(vncPortFor('default'), 59099);
+  assert.equal(vncPortFor('screen-102'), 59102);
 });
 
 test('the display list becomes screens, default first, junk lines ignored', () => {

@@ -12,6 +12,11 @@ Branch: `feat/local-docker-screens`. Delivery: `single-pr` on the user's fork (`
 - S5. A managed bot's Hermes (running on the host) drives the Chromium on its container screen through its DevTools port.
 - S6. Library files (list, download) work against the container.
 - S7. Orgo mode behaves as before (no change when `HQ_BOX` is unset).
+- S8. User request (verbatim): "corrige las advertencias de la verificación". A changed `SESSION_SECRET` must not break the viewer: the password reaches the running VNC servers on the next start check.
+- S9. The VNC password is not part of the container's configuration (`docker inspect`), and other containers cannot reach the box's VNC or DevTools servers. Accepted limit, documented: DevTools on `127.0.0.1` has no authentication.
+- S10. A Library download checks and reads the file in one command in the container, streams it, and does not depend on stderr.
+- S11. VNC host ports are outside the X11 range (59000 + display).
+- S12. Deleting a bot stops its display in the local box; a container that just started gets its screens dressed again on next use.
 - Assumption: container ports are published on `127.0.0.1` only. Assumption: Chromium replaces Chrome (no Chrome for Linux arm64).
 
 ## Tasks
@@ -21,6 +26,7 @@ Branch: `feat/local-docker-screens`. Delivery: `single-pr` on the user's fork (`
 - [x] T3 (S1) inline, docs commit: docs (`README.md`, `.env.example`, `docs/ARCHITECTURE.md`).
 
 Route: inline for all tasks (no Writer trigger: the units share `computer.ts`/`box.ts` and depend on each other).
+- [x] T4 (S3,S6,S8-S12) inline: fix the independent verification's advisories.
 
 ## Log
 
@@ -29,3 +35,6 @@ Route: inline for all tasks (no Writer trigger: the units share `computer.ts`/`b
 - L3 (2026-11-13) Evidence, observed against a live Colima container: RED then GREEN for `server/src/lib/screens.test.ts` (4 tests); `npm run typecheck` clean; viewer relay completes the RFB handshake and returns a framebuffer update in watch and control mode on `default` and `screen-100`; `GET /api/bots/:id/screenshot` returns a dressed 1440x900 JPEG; a managed bot browsed https://example.com on its own Chromium (tab confirmed on DevTools port 9300); Library list and download work, a symlink pointing outside the library returns 404; after an image change the server rebuilt and replaced the container, re-leased `screen-100`, and the volume kept the files.
 - L4 (2026-11-13) Not verified: Orgo mode at runtime (no Orgo account here); it is covered only by typecheck and by the unchanged code paths behind `env.dockerBox`. The viewer's Orgo upstream was refactored behind the same interface as the TCP one.
 - L5 (2026-11-13) Known limits: agents run on the host, so only browser work is contained; the primary bot's own Hermes config is not touched, so it does not browse on its screen unless the user sets its `browser.cdp_url`; subscription sign-in from the Engine panel stays unavailable in this mode.
+- L6 (2026-11-13) User: "corrige las advertencias de la verificación". The independent verifier had reported no blockers and these advisories: secret rotation breaks the viewer; weak isolation (short password visible in `docker inspect`, servers reachable from other containers, unauthenticated DevTools on loopback); check-then-read gap and full buffering in the download route; stderr could corrupt the resolved path; host ports 6000-6002 are the X11 range; the default screen stays bare after a recreate; `hq-display stop` is never called; tests cover only `lib/screens.ts`.
+- L7 (2026-11-13) Evidence for T4, observed live: RED then GREEN for `lib/rfb.test.ts` (3), `lib/library.test.ts` (2, the containment script runs in a throwaway `debian:bookworm-slim` container) and the new port assertions; `npm test` 9 pass; typecheck clean. Container recreated on `hq-box-net` with ports 59099-59102, no VNC variable in its env; downloads: file 200, symlink to `/etc/passwd` 404, missing 404, empty file 200 with 0 bytes, 60 MB file 200 with 60000000 bytes; default screen dressed again after the recreate (DevTools 9299 answers, 3 windows); after setting a different password by hand the viewer worked again on the next start check; a container on the default bridge could not connect to the box's DevTools port; deleting a bot removed its display from `hq-display list`.
+- L8 (2026-11-13) Not changed: `dockerBox.bash` still returns stdout and stderr together, like the other two `box` backends; the download route no longer parses it. The download still resolves the path and opens it by name within one shell process, so a file swapped inside the container in that instant is not excluded.

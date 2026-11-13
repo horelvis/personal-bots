@@ -3,7 +3,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { env } from './env.js';
-import { DEFAULT_DISPLAY, displayFor, displayNumber, parseDisplayList, vncPortFor, type Screen } from './lib/screens.js';
+import { Readable } from 'node:stream';
+import { READ_FILE_SCRIPT } from './lib/library.js';
+import { boxVncPort, DEFAULT_DISPLAY, displayFor, displayNumber, parseDisplayList, vncPortFor, type Screen } from './lib/screens.js';
 
 /**
  * The local box (HQ_BOX=docker): one Linux container on this machine that stands in for the Orgo
@@ -11,8 +13,12 @@ import { DEFAULT_DISPLAY, displayFor, displayNumber, parseDisplayList, vncPortFo
  * gets its own X display in it; `hq-display` (server/box/docker/) starts the X server, window
  * manager, VNC server and DevTools forwarder of a display.
  *
- * Ports are published on 127.0.0.1 only: VNC on 5900+display, DevTools on 9200+display. The bots'
+ * Ports are published on 127.0.0.1 only: VNC on 59000+display, DevTools on 9200+display. The
+ * container sits on a network of its own, so other containers cannot reach those servers. The bots'
  * browser profiles and Library files live in a volume, so a rebuilt container keeps them.
+ *
+ * DevTools has no authentication: any program on this machine can drive the bots' browsers through
+ * 127.0.0.1, exactly as the agents do. That is the same trust the Orgo computer gives its own users.
  */
 
 /** Displays the box can run, the default one first (the same four screens Orgo allows). */
@@ -52,21 +58,44 @@ function imageTag(): string {
 }
 
 /** VNC passwords are eight characters at most. Derived from SESSION_SECRET, so nothing new to store. */
-const vncPassword = () => crypto.createHmac('sha256', env.sessionSecret).update('box-vnc').digest('hex').slice(0, 8);
+const vncPassword = () => crypto.createHmac('sha256', env.sessionSecret).update('box-vnc').digest('base64url').slice(0, 8);
+
+const network = () => `${env.dockerContainer}-net`;
+
+/** How the container is created. The password is not here: it goes in afterwards, over stdin. */
+function runArgs(tag: string): string[] {
+  return [
+    '--init', '--shm-size=1g', '--restart', 'unless-stopped', '--network', network(),
+    '-e', `HQ_SCREEN_SIZE=${env.dockerScreenSize}`,
+    // The clock on a bot's home screen should read like the one on this machine.
+    '-e', `TZ=${Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}`,
+    '-v', `${env.dockerContainer}-data:/root/grokbot`,
+    '-p', `127.0.0.1:${vncPortFor('default')}-${vncPortFor(`screen-${last}`)}:${boxVncPort(first)}-${boxVncPort(last)}`,
+    '-p', `127.0.0.1:${9200 + first}-${9200 + last}:${19200 + first}-${19200 + last}`,
+    tag,
+  ];
+}
+
+/** Stamp of how a container was created; one made any other way is replaced. */
+const specOf = (args: string[]) => crypto.createHash('sha256').update(JSON.stringify(args)).digest('hex').slice(0, 12);
 
 const lastLine = (s: string) => s.trim().split('\n').pop()?.slice(0, 300) ?? '';
 
-async function start(): Promise<void> {
+/** Returns true when the container was created or started just now, so nothing known about its screens holds any more. */
+async function start(): Promise<boolean> {
   const name = env.dockerContainer;
-  const tag = imageTag();
-  const info = await docker(['inspect', '-f', '{{.State.Running}} {{.Config.Image}}', name]);
+  const args = runArgs(imageTag());
+  const tag = args[args.length - 1];
+  const spec = specOf(args);
+  let fresh = false;
+  const info = await docker(['inspect', '-f', '{{.State.Running}} {{index .Config.Labels "hq.spec"}}', name]);
   if (info.code === 127) throw new Error(`The docker command was not found (${env.dockerBin}). Install a Docker-compatible runtime, for example Colima.`);
   if (info.code !== 0 && /cannot connect|failed to connect|is the docker daemon running/i.test(info.stderr)) {
     throw new Error('Docker is not running. Start it (for example: colima start) and try again.');
   }
   let state = info.code === 0 ? info.stdout.toString().trim().split(' ') : null;
-  if (state && state[1] !== tag) {
-    // Built from older sources: replace it. The volume keeps profiles and files.
+  if (state && state[1] !== spec) {
+    // Made from older sources or settings: replace it. The volume keeps profiles and files.
     await docker(['rm', '-f', name]);
     state = null;
   }
@@ -76,29 +105,31 @@ async function start(): Promise<void> {
       const built = await docker(['build', '-t', tag, IMAGE_DIR], { timeoutMs: 20 * 60_000 });
       if (built.code !== 0) throw new Error(`Could not build the box image: ${lastLine(built.stderr)}`);
     }
-    const run = await docker([
-      'run', '-d', '--name', name, '--init', '--shm-size=1g', '--restart', 'unless-stopped',
-      '-e', `HQ_VNC_PASSWORD=${vncPassword()}`, '-e', `HQ_SCREEN_SIZE=${env.dockerScreenSize}`,
-      // The clock on a bot's home screen should read like the one on this machine.
-      '-e', `TZ=${Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}`,
-      '-v', `${name}-data:/root/grokbot`,
-      '-p', `127.0.0.1:${5900 + first}-${5900 + last}:${5900 + first}-${5900 + last}`,
-      '-p', `127.0.0.1:${9200 + first}-${9200 + last}:${19200 + first}-${19200 + last}`,
-      tag,
-    ]);
+    if ((await docker(['network', 'inspect', network()])).code !== 0) {
+      const net = await docker(['network', 'create', network()]);
+      if (net.code !== 0 && !/already exists/i.test(net.stderr)) throw new Error(`Could not create the box network: ${lastLine(net.stderr)}`);
+    }
+    const run = await docker(['run', '-d', '--name', name, '--label', `hq.spec=${spec}`, ...args]);
     if (run.code !== 0) throw new Error(`Could not start the box: ${lastLine(run.stderr)}`);
+    fresh = true;
   } else if (state[0] !== 'true') {
     const started = await docker(['start', name]);
     if (started.code !== 0) throw new Error(`Could not start the box: ${lastLine(started.stderr)}`);
+    fresh = true;
   }
-  for (let i = 0; i < 40; i++) {
-    if ((await listScreens()).some((s) => s.default)) return;
-    await new Promise((r) => setTimeout(r, 500));
+  // The password goes in on every start: a changed SESSION_SECRET then reaches the running VNC servers.
+  let pass: Out = { code: 1, stdout: Buffer.alloc(0), stderr: '' };
+  for (let i = 0; i < 20 && pass.code !== 0; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 500));
+    pass = await docker(['exec', '-i', name, 'hq-display', 'setpass'], { input: Buffer.from(`${vncPassword()}\n`), timeoutMs: 20_000 });
   }
-  throw new Error('The box started but its first screen did not come up.');
+  if (pass.code !== 0) throw new Error(`Could not set up the box: ${lastLine(pass.stderr)}`);
+  const first99 = await docker(['exec', name, 'hq-display', 'start', String(DEFAULT_DISPLAY)], { timeoutMs: 30_000 });
+  if (first99.code !== 0) throw new Error(`The box started but its first screen did not come up: ${lastLine(first99.stderr)}`);
+  return fresh;
 }
 
-let starting: Promise<void> | null = null;
+let starting: Promise<boolean> | null = null;
 let checkedAt = 0;
 
 async function exec(command: string, timeoutSec: number, screenId?: string | null, input?: Buffer): Promise<Out> {
@@ -111,11 +142,14 @@ async function listScreens(): Promise<Screen[]> {
 }
 
 export const dockerBox = {
-  /** Make sure the container runs (building the image the first time). Cheap when it was checked recently. */
-  ensure(): Promise<void> {
-    if (Date.now() - checkedAt < 30_000) return Promise.resolve();
+  /**
+   * Make sure the container runs (building the image the first time). Cheap when it was checked
+   * recently. Resolves to true when it was created or started just now: its screens are then bare.
+   */
+  ensure(): Promise<boolean> {
+    if (Date.now() - checkedAt < 30_000) return Promise.resolve(false);
     if (!starting) {
-      starting = start().then(() => { checkedAt = Date.now(); }).finally(() => { starting = null; });
+      starting = start().then((fresh) => { checkedAt = Date.now(); return fresh; }).finally(() => { starting = null; });
     }
     return starting;
   },
@@ -163,6 +197,43 @@ export const dockerBox = {
     const s = (await listScreens()).find((x) => displayNumber(x.id) === n);
     if (!s) throw new Error(`display ${n} did not come up`);
     return s;
+  },
+
+  /** Stop a display nobody uses any more (never the default one). */
+  async deleteScreen(screenId: string): Promise<void> {
+    const n = displayNumber(screenId);
+    if (n === DEFAULT_DISPLAY || !BOX_DISPLAYS.includes(n)) return;
+    const r = await docker(['exec', env.dockerContainer, 'hq-display', 'stop', String(n)], { timeoutMs: 30_000 });
+    if (r.code !== 0) throw new Error(`could not stop display ${n}: ${lastLine(r.stderr || r.stdout.toString())}`);
+  },
+
+  /**
+   * A file from a bot's Library, as a stream, or null when it is not a regular file inside `root`.
+   * The check and the read are one command in the container (see READ_FILE_SCRIPT).
+   */
+  openLibraryFile(root: string, rel: string): Promise<{ size: number; body: ReadableStream } | null> {
+    return new Promise((resolve) => {
+      const child = spawn(env.dockerBin, ['exec', env.dockerContainer, 'sh', '-c', READ_FILE_SCRIPT, 'sh', root, rel], { stdio: ['ignore', 'pipe', 'ignore'] });
+      let head = Buffer.alloc(0);
+      let decided = false;
+      const refuse = () => { if (!decided) { decided = true; child.kill('SIGKILL'); resolve(null); } };
+      const onData = (d: Buffer) => {
+        head = Buffer.concat([head, d]);
+        const nl = head.indexOf(10);
+        // The first line is the size: a few digits. Anything else is not our script talking.
+        if (nl < 0) { if (head.length > 20) refuse(); return; }
+        const size = Number(head.subarray(0, nl).toString());
+        if (!/^\d+$/.test(head.subarray(0, nl).toString())) return refuse();
+        decided = true;
+        child.stdout.off('data', onData);
+        child.stdout.pause();
+        child.stdout.unshift(head.subarray(nl + 1));
+        resolve({ size, body: Readable.toWeb(child.stdout) as ReadableStream });
+      };
+      child.stdout.on('data', onData);
+      child.on('error', refuse);
+      child.on('close', refuse);
+    });
   },
 
   /** A JPEG of the whole screen. */

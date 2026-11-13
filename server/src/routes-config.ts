@@ -10,6 +10,8 @@ import { env } from './env.js';
 import { emitBot, getBotRow, listRoutines, listTasks } from './store.js';
 import { computerState, readyScreen, resetBotScreen } from './computer.js';
 import { box } from './box.js';
+import { dockerBox } from './dockerbox.js';
+import { safeRel } from './lib/library.js';
 import { orgo } from './orgo.js';
 import { openTerminal } from './desk.js';
 import { engineHome, engineInfo, engineKind, forgetEngineOptions, restartEngine, stopOwnScreen } from './engine.js';
@@ -200,13 +202,6 @@ configApi.post('/bots/:id/handback', (c) => {
 
 const LIB_ROOT = '/root/grokbot/files';
 
-function safeRel(p: string | undefined): string | null {
-  const rel = (p ?? '').replace(/^\/+|\/+$/g, '');
-  if (!rel) return '';
-  if (rel.split('/').some((s) => !s || s === '.' || s === '..') || /[\0\n\r]/.test(rel)) return null;
-  return rel;
-}
-
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** Parse `ls -la --time-style=+%s` output. */
@@ -273,11 +268,10 @@ configApi.get('/bots/:id/files/raw', async (c) => {
     'x-content-type-options': 'nosniff',
   });
   if (env.dockerBox) {
-    // Same rule as below, checked inside the container: follow links first, then stay inside the library.
-    const found = await box.bash(`f=$(realpath -e -- ${shq(`${root}/${rel}`)}) && r=$(realpath -e -- ${shq(root)}) && [ -f "$f" ] && case "$f" in "$r"/*) printf '%s' "$f" ;; *) exit 3 ;; esac`, 20);
-    const data = found.exit_code === 0 && found.output ? await box.readFile(found.output) : null;
-    if (!data) return c.json({ error: 'not found' }, 404);
-    return new Response(new Uint8Array(data), { headers: headers(data.length) });
+    // Same rule as below, checked inside the container in the same command that reads the file.
+    const file = await dockerBox.openLibraryFile(root, rel);
+    if (!file) return c.json({ error: 'not found' }, 404);
+    return new Response(file.body, { headers: headers(file.size) });
   }
   let file: string;
   try {
