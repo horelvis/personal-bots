@@ -139,8 +139,8 @@ Then delete the public URL in Orgo. Screens of the other bots are released when 
 You need **Node.js 22 or newer** and a Hermes gateway with its API server on (`API_SERVER_KEY` in `~/.hermes/.env`).
 
 ```bash
-git clone https://github.com/horelvis/personalBot.git
-cd personalBot
+git clone https://github.com/horelvis/personal-bots.git
+cd personal-bots
 npm ci
 cp .env.example .env      # fill in the keys; comments in the file explain each one
 npm run dev -w server     # API on :8787
