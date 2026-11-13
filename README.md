@@ -190,7 +190,7 @@ Three ways in, each independent of the others:
 
 `ALLOWED_EMAILS` limits who can create an account with any of them.
 
-Providers are declared in `server/src/oauth/providers.ts`. Adding one (GitHub, Microsoft...) is one entry there: its endpoints, the scopes that identify a person, and how its profile answer maps to an email. It is offered on the sign-in screen as soon as `<ID>_CLIENT_ID` and `<ID>_CLIENT_SECRET` are set. Each provider also lists its *services* (Gmail, Calendar...) with the scopes they need; today none is defined, and sign-in keeps no tokens.
+Providers are declared in `server/src/oauth/providers.ts`. Adding one (GitHub, Microsoft...) is one entry there: its endpoints, the scopes that identify a person, and how its profile answer maps to an email. An entry can also say that the provider wants PKCE, takes the client secret in a Basic header, or needs more than one call to find a verified email. It is offered on the sign-in screen as soon as `<ID>_CLIENT_ID` and `<ID>_CLIENT_SECRET` are set. Each provider also lists its *services* (Gmail, Calendar...) with the scopes they need; today none is defined, and sign-in keeps no tokens.
 
 ## Models and subscriptions
 

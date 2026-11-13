@@ -6,7 +6,10 @@ import crypto from 'node:crypto';
  * lives in one entry here.
  *
  * To add a provider: add an entry to `CATALOG` with its endpoints, the scopes that identify a
- * person, and how its userinfo answer becomes a profile. It is offered as soon as
+ * person, and how its userinfo answer becomes a profile. A provider that differs from the common
+ * case says so in its entry: `pkce` (it wants a code verifier), `tokenAuth: 'basic'` (the client
+ * secret goes in a header, not the form), `loadProfile` (its profile takes more than one call, for
+ * example a separate list of verified emails). It is offered as soon as
  * `<ID>_CLIENT_ID` and `<ID>_CLIENT_SECRET` are set (ID in capitals), with the redirect URI
  * `<SERVER_URL>/api/auth/<id>/callback` registered at the provider.
  *
@@ -31,17 +34,27 @@ export interface OAuthProvider {
   signInScopes: string[];
   /** Extra query parameters this provider wants on the authorize URL. */
   authParams?: Record<string, string>;
+  /** Send a PKCE challenge with the sign-in and its verifier with the code. */
+  pkce?: boolean;
+  /** Where the client secret goes in the code exchange: the form body (default) or an HTTP Basic header. */
+  tokenAuth?: 'body' | 'basic';
+  /**
+   * Gather what `profile` needs when one userinfo call is not enough. `get` fetches a URL of the
+   * provider with the person's access token and returns the parsed JSON.
+   */
+  loadProfile?(get: (url: string) => Promise<any>): Promise<any>;
   /** What else can be asked of this provider, each with the scopes it needs. */
   services: Record<string, OAuthService>;
   /** The provider's userinfo answer as a profile, or null when it must not sign anyone in (no verified email). */
   profile(raw: any): OAuthProfile | null;
 }
 
-type Definition = Omit<OAuthProvider, 'clientId' | 'clientSecret'>;
+/** A provider as it is declared: everything but the credentials, which come from the environment. */
+export type ProviderDefinition = Omit<OAuthProvider, 'clientId' | 'clientSecret'>;
 
 const looksLikeEmail = (v: unknown): v is string => typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 
-const CATALOG: Definition[] = [
+const CATALOG: ProviderDefinition[] = [
   {
     id: 'google',
     name: 'Google',
@@ -63,10 +76,10 @@ const CATALOG: Definition[] = [
   },
 ];
 
-/** The providers whose client id and secret are both present in `vars` (normally process.env). */
-export function configuredProviders(vars: Record<string, string | undefined>): OAuthProvider[] {
+/** The providers of `catalog` whose client id and secret are both present in `vars` (normally process.env). */
+export function configuredProviders(vars: Record<string, string | undefined>, catalog: ProviderDefinition[] = CATALOG): OAuthProvider[] {
   const out: OAuthProvider[] = [];
-  for (const def of CATALOG) {
+  for (const def of catalog) {
     const key = def.id.toUpperCase().replace(/[^A-Z0-9]/g, '_');
     const clientId = vars[`${key}_CLIENT_ID`]?.trim();
     const clientSecret = vars[`${key}_CLIENT_SECRET`]?.trim();
@@ -86,7 +99,21 @@ export function scopesFor(provider: OAuthProvider, services: string[]): string[]
   return scopes;
 }
 
-export function authUrl(provider: OAuthProvider, a: { redirectUri: string; state: string; scopes: string[] }): string {
+/** A fresh state for one sign-in. It names its provider, so a state made for one cannot finish another's flow. */
+export const newState = (providerId: string) => `${providerId}.${crypto.randomBytes(24).toString('base64url')}`;
+
+export function stateBelongsTo(providerId: string, state: string | undefined): boolean {
+  const prefix = `${providerId}.`;
+  return !!state && state.startsWith(prefix) && state.length > prefix.length;
+}
+
+/** A PKCE verifier and its S256 challenge. */
+export function pkcePair(): { verifier: string; challenge: string } {
+  const verifier = crypto.randomBytes(48).toString('base64url');
+  return { verifier, challenge: crypto.createHash('sha256').update(verifier).digest('base64url') };
+}
+
+export function authUrl(provider: OAuthProvider, a: { redirectUri: string; state: string; scopes: string[]; codeChallenge?: string }): string {
   const u = new URL(provider.authorizeUrl);
   for (const [k, v] of Object.entries(provider.authParams ?? {})) u.searchParams.set(k, v);
   u.searchParams.set('client_id', provider.clientId);
@@ -94,6 +121,10 @@ export function authUrl(provider: OAuthProvider, a: { redirectUri: string; state
   u.searchParams.set('response_type', 'code');
   u.searchParams.set('scope', a.scopes.join(' '));
   u.searchParams.set('state', a.state);
+  if (a.codeChallenge) {
+    u.searchParams.set('code_challenge', a.codeChallenge);
+    u.searchParams.set('code_challenge_method', 'S256');
+  }
   return u.toString();
 }
 
@@ -108,11 +139,19 @@ export function sameState(kept: string | undefined, returned: string | undefined
 export interface OAuthTokens { accessToken: string; refreshToken?: string; expiresIn?: number; scope?: string }
 
 /** Trade the code from the callback for tokens. */
-export async function exchangeCode(provider: OAuthProvider, code: string, redirectUri: string): Promise<OAuthTokens> {
+export async function exchangeCode(provider: OAuthProvider, code: string, redirectUri: string, codeVerifier?: string): Promise<OAuthTokens> {
+  const basic = provider.tokenAuth === 'basic';
+  const form = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: provider.clientId });
+  if (!basic) form.set('client_secret', provider.clientSecret);
+  if (codeVerifier) form.set('code_verifier', codeVerifier);
   const res = await fetch(provider.tokenUrl, {
     method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-    body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: provider.clientId, client_secret: provider.clientSecret }),
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      accept: 'application/json',
+      ...(basic ? { authorization: `Basic ${Buffer.from(`${provider.clientId}:${provider.clientSecret}`).toString('base64')}` } : {}),
+    },
+    body: form,
     signal: AbortSignal.timeout(15_000),
   });
   const data: any = await res.json().catch(() => null);
@@ -125,7 +164,10 @@ export async function exchangeCode(provider: OAuthProvider, code: string, redire
 
 /** Who the access token belongs to, or null when the provider gives no verified email. */
 export async function fetchProfile(provider: OAuthProvider, accessToken: string): Promise<OAuthProfile | null> {
-  const res = await fetch(provider.userinfoUrl, { headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' }, signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(`${provider.name} did not return a profile (${res.status})`);
-  return provider.profile(await res.json().catch(() => null));
+  const get = async (url: string) => {
+    const res = await fetch(url, { headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' }, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`${provider.name} did not return a profile (${res.status})`);
+    return res.json().catch(() => null);
+  };
+  return provider.profile(provider.loadProfile ? await provider.loadProfile(get) : await get(provider.userinfoUrl));
 }

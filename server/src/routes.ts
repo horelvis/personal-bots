@@ -14,7 +14,7 @@ import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engi
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { orgo } from './orgo.js';
 import { catalog, composioEnabled, composioReason, ComposioUnavailable, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
-import { authUrl, configuredProviders, exchangeCode, fetchProfile, sameState, scopesFor } from './oauth/providers.js';
+import { authUrl, configuredProviders, exchangeCode, fetchProfile, newState, pkcePair, sameState, scopesFor, stateBelongsTo } from './oauth/providers.js';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
 import { deleteEventTrigger } from './triggers.js';
@@ -71,6 +71,9 @@ const oauthProvider = (id: string) => oauthProviders.find((p) => p.id === id);
 /** Google sign-in through a Composio-managed connection: the older way, used only when Google has no OAuth client of its own here. */
 const legacyGoogle = () => composioEnabled && !oauthProvider('google');
 const STATE_COOKIE = 'grokbot_oauth_state';
+const PKCE_COOKIE = 'grokbot_oauth_pkce';
+/** Cookies of a sign-in in progress: only for the auth routes, gone in ten minutes. */
+const flowCookie = () => ({ httpOnly: true, sameSite: 'Lax' as const, secure: env.serverUrl.startsWith('https:'), path: '/api/auth', maxAge: 600 });
 const loginFailed = (c: any, why = 'failed') => c.redirect(`${env.appUrl}/?login=${why}`);
 
 api.get('/auth/me', (c) => {
@@ -85,20 +88,27 @@ api.get('/auth/me', (c) => {
 api.get('/auth/:provider/start', async (c, next) => {
   const p = oauthProvider(c.req.param('provider'));
   if (!p) return next();
-  const state = crypto.randomBytes(24).toString('base64url');
-  setCookie(c, STATE_COOKIE, `${p.id}.${state}`, { httpOnly: true, sameSite: 'Lax', secure: env.serverUrl.startsWith('https:'), path: '/api/auth', maxAge: 600 });
-  return c.redirect(authUrl(p, { redirectUri: `${env.serverUrl}/api/auth/${p.id}/callback`, state: `${p.id}.${state}`, scopes: scopesFor(p, []) }));
+  const state = newState(p.id);
+  setCookie(c, STATE_COOKIE, state, flowCookie());
+  const pkce = p.pkce ? pkcePair() : null;
+  if (pkce) setCookie(c, PKCE_COOKIE, pkce.verifier, flowCookie());
+  else deleteCookie(c, PKCE_COOKIE, { path: '/api/auth' });
+  return c.redirect(authUrl(p, { redirectUri: `${env.serverUrl}/api/auth/${p.id}/callback`, state, scopes: scopesFor(p, []), codeChallenge: pkce?.challenge }));
 });
 
 api.get('/auth/:provider/callback', async (c, next) => {
   const p = oauthProvider(c.req.param('provider'));
   if (!p) return next();
   const kept = getCookie(c, STATE_COOKIE);
+  const verifier = getCookie(c, PKCE_COOKIE);
   deleteCookie(c, STATE_COOKIE, { path: '/api/auth' });
+  deleteCookie(c, PKCE_COOKIE, { path: '/api/auth' });
   const code = c.req.query('code');
-  if (c.req.query('error') || !code || !sameState(kept, c.req.query('state'))) return loginFailed(c);
+  // The state must be the one this browser started with, and one that was made for this provider.
+  if (c.req.query('error') || !code || !stateBelongsTo(p.id, kept) || !sameState(kept, c.req.query('state'))) return loginFailed(c);
+  if (p.pkce && !verifier) return loginFailed(c);
   try {
-    const tokens = await exchangeCode(p, code, `${env.serverUrl}/api/auth/${p.id}/callback`);
+    const tokens = await exchangeCode(p, code, `${env.serverUrl}/api/auth/${p.id}/callback`, p.pkce ? verifier : undefined);
     const profile = await fetchProfile(p, tokens.accessToken);
     if (!profile) return loginFailed(c);
     // Sign-in needs only the profile, so the tokens are dropped here. Connecting one of the
