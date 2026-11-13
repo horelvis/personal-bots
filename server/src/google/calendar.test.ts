@@ -41,3 +41,9 @@ test('what the user is asked to approve says which event, when, and who is invit
   assert.equal(describeEventChange('delete', { id: 'e9' }), 'Delete: event e9 (could not be looked up)');
   assert.equal(describeEventChange('update', { id: 'e1', attendees: [] }, existing), 'Change: Sync\nNow: 2026-11-20T10:00:00+01:00 to 2026-11-20T10:30:00+01:00\nNew invite list: (nobody)');
 });
+
+test('the card for a new event shows the details that invitees will receive', () => {
+  assert.equal(describeEventChange('create', { summary: 'Sync', start: '2026-11-20', end: '2026-11-21', description: 'Agenda:\n1. Budget', attendees: ['ana@example.com'] }),
+    'Create: Sync\nWhen: 2026-11-20 to 2026-11-21\nDetails: Agenda: 1. Budget\nInvites: ana@example.com');
+  assert.match(describeEventChange('create', { summary: 'Sync', description: 'x'.repeat(900) }), /Details: x{600} \[\+300 more characters\]$/);
+});

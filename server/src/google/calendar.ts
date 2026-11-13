@@ -71,6 +71,12 @@ export function eventSummary(ev: any) {
   return out;
 }
 
+/** An event's description on one line of the card: invitees receive it, so the user sees it (the start of it when long). */
+function details(v: unknown): string {
+  const flat = String(v ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim();
+  return flat.length > 600 ? `${flat.slice(0, 600)} [+${flat.length - 600} more characters]` : flat;
+}
+
 const people = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(',') : []).map((s) => s.trim()).filter(Boolean);
 
 /**
@@ -84,6 +90,7 @@ export function describeEventChange(kind: 'create' | 'update' | 'delete', a: any
     lines.push(`Create: ${String(a?.summary ?? '(no title)')}`);
     if (a?.start && a?.end) lines.push(`When: ${a.start} to ${a.end}`);
     if (a?.location) lines.push(`Where: ${a.location}`);
+    if (a?.description) lines.push(`Details: ${details(a.description)}`);
     if (people(a?.attendees).length) lines.push(`Invites: ${people(a.attendees).join(', ')}`);
     return lines.join('\n');
   }
@@ -97,7 +104,7 @@ export function describeEventChange(kind: 'create' | 'update' | 'delete', a: any
     if (a?.summary !== undefined) lines.push(`New title: ${a.summary}`);
     if (a?.start && a?.end) lines.push(`New time: ${a.start} to ${a.end}`);
     if (a?.location !== undefined) lines.push(`New place: ${a.location}`);
-    if (a?.description !== undefined) lines.push(`New details: ${String(a.description).slice(0, 300)}`);
+    if (a?.description !== undefined) lines.push(`New details: ${details(a.description)}`);
     if (a?.attendees !== undefined) lines.push(`New invite list: ${people(a.attendees).join(', ') || '(nobody)'}`);
   }
   return lines.join('\n');
