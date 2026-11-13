@@ -432,12 +432,29 @@ export async function removeEngine(botId: string): Promise<void> {
   if (path.resolve(home).startsWith(path.resolve(env.enginesDir) + path.sep)) fs.rmSync(home, { recursive: true, force: true });
 }
 
-/** On server start: give older bots an engine, then bring the managed gateways up. */
-export function initEngines() {
+/**
+ * On server start: give older bots an engine, then bring the managed gateways up.
+ *
+ * An agent reads the app's tools once, when its gateway starts. `toolsStamp` identifies the tools this
+ * server offers now: a gateway that started with other tools (the app was upgraded, a provider was
+ * configured) is started again, or its bot would never learn of the new ones. The primary agent is
+ * not ours to restart; it picks tools up on its own restart.
+ */
+export function initEngines(toolsStamp?: string) {
   fs.mkdirSync(env.enginesDir, { recursive: true });
   const bots = db.prepare("SELECT id, is_primary FROM bots WHERE engine IS NULL AND COALESCE(kind,'agent') <> 'room' AND COALESCE(hidden,0)=0 ORDER BY is_primary DESC, created_at ASC").all() as any[];
   for (const b of bots) assignEngine(b.id);
-  for (const b of db.prepare("SELECT id FROM bots WHERE engine='managed'").all() as any[]) provisionEngine(b.id);
+  for (const b of db.prepare("SELECT id FROM bots WHERE engine='managed'").all() as any[]) {
+    const stampFile = path.join(homeFor(b.id), '.hq-tools');
+    let known = '';
+    try { known = fs.readFileSync(stampFile, 'utf8').trim(); } catch { /* never stamped */ }
+    if (toolsStamp && known !== toolsStamp) {
+      console.log(`[engine] ${b.id}: the app's tools changed, starting its gateway again`);
+      restartEngine(b.id)
+        .then(() => { try { fs.writeFileSync(stampFile, toolsStamp); } catch { /* its home is not there yet; next start tries again */ } })
+        .catch((e) => console.warn(`[engine] ${b.id}: restart failed: ${e?.message ?? e}`));
+    } else provisionEngine(b.id);
+  }
 }
 
 // ---------- what the settings panel shows ----------

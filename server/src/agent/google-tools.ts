@@ -30,6 +30,12 @@ const json = (v: unknown) => JSON.stringify(v, null, 1);
 const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.map(String) : typeof v === 'string' && v.trim() ? v.split(',').map((s) => s.trim()) : undefined);
 const DATES = 'A day (2026-11-20) or a date-time with its offset (2026-11-20T10:00:00+01:00).';
 
+/** Which of the tools below use which Google service. Bots are told about them by these names. */
+export const GOOGLE_SERVICE_TOOLS: Record<string, string[]> = {
+  gmail: ['gmail_search', 'gmail_read', 'gmail_send'],
+  calendar: ['calendar_list_events', 'calendar_create_event', 'calendar_update_event', 'calendar_delete_event'],
+};
+
 export const googleTools: ToolDef[] = [
   {
     name: 'gmail_search',

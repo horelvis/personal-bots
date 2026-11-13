@@ -4,7 +4,9 @@ import { hub } from '../lib/hub.js';
 import { box } from '../box.js';
 import { env } from '../env.js';
 import { appendRow, getBotRow, listRoutines, toRoutine, describeCron } from '../store.js';
-import { executeComposio, innerToolSlugs, isReadOnlySlug, toolkitInfo } from '../composio.js';
+import { composioEnabled, executeComposio, innerToolSlugs, isReadOnlySlug, toolkitInfo } from '../composio.js';
+import { serviceForToolkit } from './apps-guidance.js';
+import { ownServices } from './own-services.js';
 import { scheduleRoutine, unscheduleRoutine } from '../routines.js';
 import { createEventRoutine, deleteEventTrigger, describeEvent, listTriggerTypes } from '../triggers.js';
 import { setCheckins } from '../proactive.js';
@@ -327,6 +329,14 @@ export const TOOLS: ToolDef[] = [
     activity: 'connecting_service',
     label: 'Using a connected app',
     impl: async (a, ctx) => {
+      // Gmail, Google Calendar and the like are not connected here: they have tools of their own.
+      const own = serviceForToolkit(String(a.toolkit ?? ''), ownServices(ctx.userId));
+      if (own) {
+        return { output: own.connected
+          ? `${own.name} is already connected. Use these tools: ${own.tools.join(', ')}.`
+          : `${own.name} is connected from the app, not from here. Tell the user to open "Connect Apps" in the app and connect ${own.name} under ${own.provider}; then you can use ${own.tools.join(', ')}. Stop here.` };
+      }
+      if (!composioEnabled) return { output: `No connected apps are set up on this server, so "${a.toolkit}" cannot be connected. Tell the user, or do the task another way.` };
       const info = await toolkitInfo(String(a.toolkit).toLowerCase());
       if (!info) return { output: `Unknown toolkit "${a.toolkit}". Use COMPOSIO_SEARCH_TOOLS to find the right toolkit slug.` };
       appendRow(ctx.botId, 'card', { type: 'card', card: 'connect', toolkit: info.slug, toolkitName: info.name, logo: info.logo, reason: a.reason, status: 'pending' });
