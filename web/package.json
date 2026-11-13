@@ -1,5 +1,5 @@
 {
-  "name": "@grokbot/web",
+  "name": "@personalbot/web",
   "private": true,
   "type": "module",
   "scripts": {
