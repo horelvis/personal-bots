@@ -236,6 +236,34 @@ tests/              Playwright end-to-end test
 docs/               architecture; the Orgo and xAI/Composio guides predate the Hermes engine
 ```
 
+### Adding character avatars
+
+A bot's picture is a character cut from a source drawing and shown in a circle over the bot's color. The source drawings are not in the repository; the cut pictures in `web/public/assets/avatars/` are. To add a character:
+
+1. **Source file.** Put one PNG per character in `avatars/` at the repository root: 8-bit RGBA, not interlaced, with a transparent background; the script stops on any other PNG format. The crop is tuned for drawings of 1024 × 1056.
+2. **Script entry.** Add a line to `CHARACTERS` in `web/scripts/gen-avatars.py` with the id, the file name and the position of the eyes in the source file. The avatar is a 768 px square centered on the eyes, starting 420 px above them.
+
+   ```python
+   ('bot-pilot', '11_pilot.png', 530, 310),   # id, file, eyes x, eyes y
+   ```
+
+3. **App entries.** Add the same id, with the name shown in the picker, to `CHARACTERS` in `server/src/lib/characters.ts`, and add the id to the `AvatarShape` type in `server/src/types.ts`.
+
+   ```ts
+   { id: 'bot-pilot', name: 'Pilot' },
+   ```
+
+4. **Generate.** Run the script and commit what it writes: `<id>.png` (256 px, for the app) and `<id>.small.png` (64 px, for the bot's home screen). The script cuts every character in its list again, so the folder needs all of their source files, not only the new one.
+
+   ```bash
+   python3 web/scripts/gen-avatars.py            # reads avatars/
+   python3 web/scripts/gen-avatars.py ~/artwork  # or another folder
+   ```
+
+The new character then shows up when you create a bot and in its settings, and new bots without a chosen look may get it.
+
+If a source file has leftover patches of an old background next to the figure, name the rectangle in `CLEAN` in the script and say which pixels in it are background; the two existing entries show how.
+
 ## Status and limits
 
 - Experimental, no security audit. Bots share one computer and can reach each other's files there.
