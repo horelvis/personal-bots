@@ -37,27 +37,30 @@ export function mergeFacts(perBot: { botId: string; entries: string[] }[]): Fact
   return [...byHash.values()];
 }
 
-/** The latest facts that fit the limits. */
+/** The latest facts that fit the limits. One that does not fit is left out; the ones before it may still fit. */
 function capped(texts: string[]): string[] {
   const out: string[] = [];
   let chars = 0;
   for (let i = texts.length - 1; i >= 0 && out.length < FACTS_LIMIT; i--) {
-    if (chars + texts[i].length > FACTS_CHARS) break;
+    if (chars + texts[i].length > FACTS_CHARS) continue;
     chars += texts[i].length;
     out.unshift(texts[i]);
   }
   return out;
 }
 
+/** A fact as one line of a list: no line break of any kind can start a line of its own in a prompt. */
+export const factLine = (text: string) => `- ${text.replace(/[\r\n\u2028\u2029]+/g, ' ')}`;
+
 /**
- * What one bot is told. `others` are the facts it does not hold itself (a Hermes agent already has
- * its own in its memory); `all` is every fact (for a bot whose memory the app sends in full).
+ * What one bot is told. `others` are the facts it does not hold itself, capped (a Hermes agent
+ * already has its own in its memory). `all` is for a bot whose memory the app sends in full: every
+ * fact of its own, as before sharing existed, followed by `others`.
  */
 export function factsFor(facts: Fact[], botId: string): { others: string[]; all: string[] } {
-  return {
-    others: capped(facts.filter((f) => !f.bots.includes(botId)).map((f) => f.text)),
-    all: capped(facts.map((f) => f.text)),
-  };
+  const others = capped(facts.filter((f) => !f.bots.includes(botId)).map((f) => f.text));
+  const own = facts.filter((f) => f.bots.includes(botId)).map((f) => f.text);
+  return { others, all: [...own, ...others] };
 }
 
 /**

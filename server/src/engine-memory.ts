@@ -76,8 +76,10 @@ export function listMemories(botId: string): Memory[] {
   const notes = read(path.join(home, 'memories', NOTES.file));
   for (const text of notes.entries) out.push({ id: idFor(botId, NOTES.key, text), botId, text, createdAt: Math.round(notes.mtime), source: NOTES.source });
   const { facts, mtimes } = userFacts(owner);
-  for (const f of facts) {
-    const mine = f.bots.includes(botId);
+  // The bot's own facts first, as they were listed before sharing; then what it knows through the team.
+  const has = (f: Fact) => f.bots.includes(botId);
+  for (const f of [...facts.filter(has), ...facts.filter((f) => !has(f))]) {
+    const mine = has(f);
     out.push({ id: idFor(botId, USER.key, f.text), botId, text: f.text, createdAt: Math.round(mtimes.get(mine ? botId : f.bots[0]) ?? 0), source: USER.source, ...(mine ? {} : { shared: true }) });
   }
   return out;

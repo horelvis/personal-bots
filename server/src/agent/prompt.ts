@@ -6,6 +6,7 @@ import { ownServices } from './own-services.js';
 import { LIBRARY_ROOT } from './tools.js';
 import { cliAdapter } from './cli/index.js';
 import { MEMORY_TOOL } from './cli/tools.js';
+import { factLine } from '../lib/user-facts.js';
 import { listMemories, sharedFactsFor } from '../engine-memory.js';
 
 /**
@@ -42,7 +43,7 @@ export async function instructionsFor(userId: string, botId: string): Promise<st
   // (A CLI bot gets every fact in its memory section instead.) Nothing is added when there is nothing to tell.
   const others = cli ? [] : sharedFactsFor(botId).others;
   const teamFacts = others.length
-    ? `\n## What the team knows about ${owner}\nOther agents on the team saved these facts about ${owner}. Treat them as things you know.\n${others.map((t) => `- ${t.replace(/\n+/g, ' ')}`).join('\n')}\n`
+    ? `\n## What the team knows about ${owner}\nOther agents on the team saved these facts about ${owner}. Treat them as things you know.\n${others.map(factLine).join('\n')}\n`
     : '';
 
   const who = primaryEngine
@@ -81,10 +82,9 @@ ${teamFacts}${routines ? `\n## Your routines in the app\n${routines}\n` : ''}${s
 
 /** What only a bot on a CLI engine is told: where it works, what needs approval, and what it remembers. */
 function cliSections(botId: string, owner: string, engineName: string): string {
-  const line = (text: string) => `- ${text.replace(/\n+/g, ' ')}`;
-  const mine = listMemories(botId).filter((m) => m.source === 'learned').map((m) => line(m.text)).join('\n');
+  const mine = listMemories(botId).filter((m) => m.source === 'learned').map((m) => factLine(m.text)).join('\n');
   // Facts about the user are shared by the whole team; this bot's own notes are not.
-  const user = sharedFactsFor(botId).all.map(line).join('\n');
+  const user = sharedFactsFor(botId).all.map(factLine).join('\n');
   return `## Your workspace
 You run on ${engineName}, in a folder of your own on ${owner}'s machine. You can read and search files there and on the web freely. Running a shell command that changes something, writing or editing a file, or reading outside your folder waits for ${owner} to approve it in the app, like the actions above. Keep your work inside your folder. You have no screen or browser of your own.
 

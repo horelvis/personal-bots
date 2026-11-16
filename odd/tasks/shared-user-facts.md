@@ -16,7 +16,7 @@ Branch: `feat/shared-user-facts`, stacked on `feat/ask-bot` (`dc6c770`). Deliver
 - Assumption (R3's second open decision, existing entries): entries already in each bot's `USER.md` stay where they are and become shared by being read; nothing is migrated.
 - Assumption: "kept once" is met by showing and sending each fact once (same text in two bots is one fact); the files may still hold it twice.
 - Assumption: removing a shared fact from the memory screen removes that text from every bot of the user that has it, the primary agent's file included. That is the user's own action, which the app already performs today for a bot's own entries; the app still never writes that file by itself.
-- Assumption: the facts added to a bot's instructions are capped (40 facts, 4000 characters), newest file order kept, so a long history cannot crowd the prompt.
+- Assumption: the facts a bot gets from other bots are capped (40 facts, 4000 characters, the latest kept), so a long history cannot crowd the prompt. A bot's own facts are never capped by this.
 
 ## Tasks
 
@@ -24,6 +24,7 @@ Branch: `feat/shared-user-facts`, stacked on `feat/ask-bot` (`dc6c770`). Deliver
 - [x] T2 (S2,S3,S4,S5,S6) inline: memory listing and removal across a user's bots, facts in every bot's instructions, the "From the team" mark on the memory screen, docs.
 - [x] T3 (S7) inline: end-to-end check with two bots (L4).
 All three are in one commit, the one that adds this document.
+- [x] T4 (S2) inline: correction after independent verification (B1 in L6). Commit: the one that adds this line.
 
 Route: inline (one behavior; T2 depends on T1).
 
@@ -40,3 +41,11 @@ Route: inline (one behavior; T2 depends on T1).
   - Removing the time zone fact from Bob's list removed it from Alice's and Bob's `USER.md`; "They have two dogs." and Alice's `MEMORY.md` were left as they were.
   - Not checked: a Hermes bot (no gateway here): the section "What the team knows about ..." added to its instructions, and removal reaching the primary agent's `USER.md`; the "From the team" chip in the browser (typecheck only); the 40-fact and 4000-character cap beyond its unit test.
 - L5 (2026-11-16) Changes to existing behavior, intended: a bot's memory list now also holds the facts other bots of the same user saved; removing a user fact reaches every bot of that user. For a Hermes bot the instructions are unchanged while no other bot holds a fact it lacks.
+- L6 (2026-11-16) Independent verification of `040a61e` (isolated server, stand-in CLI, scratch primary home, no model turns). S3-S6 pass; S2 pass with one blocker; S7 not run with a model (L4 covers it).
+  - B1: the cap was applied to every fact a CLI bot is told, its own included. With 30 own facts and 33 from another bot it was told 7 of its own (30 before this change); three long facts from another bot removed its own two; one entry over 4000 characters ended the list, so every bot was told nothing.
+  - Held: removal takes out exactly the named fact in every bot of that user and nothing else (multi-paragraph entries, an inline "§", padded duplicates, a file without a trailing newline, a missing file, a note in `MEMORY.md` with the same text); crafted ids change nothing; another user's files stay byte-identical and their ids answer 404; only one bot on the server can be `primary`, so two users cannot share that home; listing and building instructions write no file; Hermes instructions are byte-identical to `dc6c770` while no other bot holds a fact the bot lacks; the format written by removal matches baseline.
+  - Advisories, not changed: a fact saved through one bot now reaches every bot of that user, so a poisoned fact has a wider reach than before; a `USER.md` with CRLF line ends is read as one entry (as before) and is now shared as one fact; removal rewrites other bots' files by read-modify-write and can race with an agent writing its own file; `DELETE /memories/:id` answers ok when nothing was removed (as before); another bot's open memory list does not refresh after a shared removal.
+- L7 (2026-11-16) Correction, RED then GREEN (4 new tests failed first; suite 117 tests, 116 pass, 0 fail, 1 skipped; typecheck clean):
+  - B1: a bot whose memory the app sends in full gets all of its own facts, then the capped facts of the others. A fact too long to send is skipped instead of ending the list.
+  - Advisory taken: a fact is written on one line whatever line break it holds (`\r`, `\n`, U+2028, U+2029), in both places that list facts.
+  - Advisory taken: the memory list puts a bot's own facts before the team's, so the voice prompt, which takes the first 12, still starts with the bot's own.
