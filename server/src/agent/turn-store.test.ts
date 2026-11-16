@@ -136,16 +136,15 @@ test('a turn that starts at once does not wait', async () => {
 // After a restart all of a bot's turns wait for the same engine: one wait, not one per turn.
 test('the engine wait after a restart is shared by every turn of the same bot', async () => {
   const calls: string[] = [];
-  let release!: (v: boolean) => void;
-  const wait = shareWait((botId) => { calls.push(botId); return new Promise<boolean>((r) => { release = r; }); });
+  const release: Record<string, (v: boolean) => void> = {};
+  const wait = shareWait((botId) => { calls.push(botId); return new Promise<boolean>((r) => { release[botId] = r; }); });
   const a1 = wait('a');
   const a2 = wait('a');
   const b1 = wait('b');
   assert.deepEqual(calls, ['a', 'b']);
-  release(true);
-  assert.equal(await b1, true);
-  // Every later turn of 'a' gets the same answer without waiting again.
-  assert.equal(a1, a2);
-  assert.equal(wait('a'), a1);
+  release.a(false);
+  release.b(true);
+  // Every turn of 'a' gets a's answer, b gets its own, and nobody waited twice.
+  assert.deepEqual(await Promise.all([a1, a2, wait('a'), b1]), [false, false, false, true]);
   assert.deepEqual(calls, ['a', 'b']);
 });

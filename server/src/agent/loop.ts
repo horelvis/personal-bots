@@ -63,6 +63,9 @@ export function enqueue(botId: string, trigger: Trigger, stored?: number) {
         // It stays queued, so the next start of the server runs it once. Not asked to be sent again:
         // that copy and this one would both run.
         try { appendRow(botId, 'notice', { type: 'notice', text: 'This could not be started because the app could not record it. It will run when the server next starts; no need to send it again.', tone: 'error' }); emitBot(botId); } catch { /* the database is the problem; the log says so */ }
+        // Nothing runs: the bot must not stay shown as busy (the wait after a restart marked it so).
+        // An approval card still waiting for the user keeps its "waiting for you" state, as at the end of a turn.
+        try { setLive(botId, getLive(botId).awaiting ? { isRunning: false, caption: null } : { isRunning: false, activity: null, caption: null, startedAt: null }); } catch { /* the bot is gone */ }
         return;
       }
       try { await runTurn(botId, trigger); } finally { turnStore.end(id); }
