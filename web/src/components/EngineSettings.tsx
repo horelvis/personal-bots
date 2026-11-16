@@ -81,6 +81,8 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   }
 
   const providers = sortProviders(engine.providers ?? []);
+  // A CLI engine (Claude Code) has no providers, sign-in or gateway of its own to manage here.
+  const isCli = !!engine.engine && engine.engine !== 'hermes';
   const selected = providers.find((p) => p.id === provider) ?? null;
   const suggestions = selected?.models ?? [];
   const wantProvider = provider && provider !== (engine.provider ?? '') ? provider : undefined;
@@ -135,7 +137,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
 
   return (
     <div className="panel-card engine">
-      <div className="panel-row panel-row--setting">
+      {!isCli && <div className="panel-row panel-row--setting">
         <span>Provider</span>
         <span className="mini-select mini-select--native engine__select">
           <span>{selected?.name ?? (provider || 'Default')}</span>
@@ -145,7 +147,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
             {providers.map((p) => <option key={p.id} value={p.id}>{p.name} · {KIND[p.kind]} · {p.connected ? 'Connected' : 'Not connected'}</option>)}
           </select>
         </span>
-      </div>
+      </div>}
       {selected && (
         <div className={`engine__conn${selected.connected ? ' is-on' : ''}`}>
           <i aria-hidden />
@@ -156,7 +158,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
         <label htmlFor={`${listId}-input`}>Model</label>
         <input
           id={`${listId}-input`} className="engine__model" list={listId} value={model} spellCheck={false} autoComplete="off"
-          placeholder={suggestions[0] ?? 'Model id'}
+          placeholder={suggestions[0] ?? (isCli ? `${engine.engineName}’s default` : 'Model id')}
           onChange={(e) => { dirty.current = true; setNote(null); setModel(e.target.value); }}
           onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
         />
@@ -180,11 +182,11 @@ export function EngineSettings({ bot }: { bot: Bot }) {
       )}
       {note && <div className="voice-error" role="alert">{note}</div>}
       <div className="engine__meta">
-        <span className={`engine__state is-${engine.status}`} title={engine.version ? `Hermes ${engine.version}` : undefined}>
+        <span className={`engine__state is-${engine.status}`} title={engine.version ? (isCli ? engine.version : `Hermes ${engine.version}`) : undefined}>
           <i aria-hidden />
-          Hermes · profile {engine.profile} · {STATUS[engine.status] ?? engine.status}
+          {isCli ? `${engine.engineName} · ${STATUS[engine.status] ?? engine.status}` : `Hermes · profile ${engine.profile} · ${STATUS[engine.status] ?? engine.status}`}
         </span>
-        {(engine.status === 'error' || engine.status === 'stopped') && (
+        {!isCli && (engine.status === 'error' || engine.status === 'stopped') && (
           <button type="button" className="link-btn link-btn--small" onClick={restart} disabled={busy === 'restart'}>{busy === 'restart' ? 'Restarting…' : 'Restart agent'}</button>
         )}
       </div>
