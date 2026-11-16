@@ -68,3 +68,9 @@ Route: inline for all tasks (no Writer trigger: T2 and T3 depend on T1; one seam
   - B2: `GIT_CEILING_DIRECTORIES=<home>`. Probe in an in-repo folder: `git status` and `git log` answer "not a git repository"; `git -C <repo>` and `git --git-dir=` are carded.
   - B3: a command or path over 2000 characters is refused without a card; shorter ones are shown whole.
   - Advisory taken: the bot home is now mode 700.
+- L12 (2026-11-16) Recheck by the same verifier, limited to B1-B3, at `4bcceaa` (in-repo clone, 2 real CLI turns): all three fixed.
+  - B1: the running `claude` process shows only file paths; `ps auxww` has no token; Read and `cat` of `<home>/mcp.json` and `<home>/system.md` are carded; home is 700, both files 600. The `ps | grep Bearer` line was run from the host, not by the bot (the model declined to run it).
+  - B2: the six git commands answer "fatal: not a git repository" from the in-repo work folder.
+  - B3: a 2126-character command is refused without a card; the original 1326-character reproduction now gets a card showing the whole command, tail included; a short command gets a full card; a denied `touch` leaves no file.
+  - Still unverified: `gmail_send` (or any write-tool card) for a CLI bot, a real Hermes turn after the change, approvals that wait minutes, a `blocked` policy (code reading only).
+- L13 (2026-11-16) Scratch removed by the parent: the verifier's `/tmp/verify-engine.wSOYz3` and a Hermes gateway its test server had started for a scratch bot (confirmed by its HERMES_HOME before stopping it).
