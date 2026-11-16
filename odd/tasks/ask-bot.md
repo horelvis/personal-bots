@@ -43,3 +43,9 @@ Route: inline (one behavior; T2 depends on T1).
   - A3, left: stopping the asker releases the wait; the other bot's answer then arrives as a message and starts a turn the user did not ask for, as a `send_to_bot` reply does today.
   - Not checked by the verifier: real model behavior (covered by L4), Hermes turns, the 9-minute default, a restart while a bot waits.
 - L7 (2026-11-16) After the two fixes: 100 tests, 99 pass, 0 fail, 1 skipped; typecheck clean. The fixes have no test of their own (the loop wiring is not unit-tested).
+- L8 (2026-11-16) Native review (RDD), consent asked and granted by the user ("Revisar este cambio"). Candidate: commits `6b26301` and `c829ca7` from `5a73fba` (11 files). Lenses: risk, resilience, reliability. Outcome: approved, acknowledged (lineage `review-2099054b25f3610c`). No blocker and no correction. Non-blocking findings, left as later work:
+  - `askBot` registers the question before `enqueueBotMessage`; if that call throws (the asker's row is gone, a failed row write), the question stays "waiting" for the whole limit and wrongly blocks the circle check.
+  - Late delivery runs in `runTurn`'s cleanup without a guard; if the answering bot was removed during its own turn, `enqueueBotMessage` throws and the live-state reset after it is skipped.
+  - After "still working", if the asked bot's turn ends with nothing said, the asker is never told that no answer will come.
+  - `ASK_BOT_WAIT_SECONDS` has no upper bound: above the 30-minute tool timeout the engine gives up first, and above about 24.8 days the timer fires at once; "0" or text silently becomes 540.
+  - The loop wiring and the `ask_bot` result branches have no automated test; timeouts, releases and refused circles leave no log line.
