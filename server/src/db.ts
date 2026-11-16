@@ -83,6 +83,16 @@ CREATE TABLE IF NOT EXISTS pending_turns (
   bot_id TEXT PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
   state TEXT NOT NULL
 );
+-- Every turn handed to a bot, from the moment it is queued until it ends: 'queued' while it waits,
+-- 'running' once its run has started. What is still here when the server starts was cut off by a
+-- stop (see agent/queue-recovery.ts).
+CREATE TABLE IF NOT EXISTS turn_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  trigger TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'queued',
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS approvals (
   id TEXT PRIMARY KEY,
   bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
