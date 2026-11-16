@@ -5,14 +5,18 @@ import { appendRow, emitBot, getBotRow, getLive, getRow, setLive, updateRow } fr
 import type { ActivityKind, MessageBody, ToolCallBody } from '../types.js';
 import { toolkitInfo } from '../composio.js';
 import { screenForWork } from '../computer.js';
-import { engineFor } from '../engine.js';
+import { cliHome, cliSession, engineFor, forgetCliSession, mcpToken, saveCliSession } from '../engine.js';
+import { env } from '../env.js';
 import { instructionsFor } from './prompt.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
+import { cliAdapter, runCli, type CliAdapter } from './cli/index.js';
+import { PERMISSION_TOOL, cliActivity } from './cli/tools.js';
 
 /**
- * A turn: one message handed to the bot's Hermes engine and streamed back into the conversation.
+ * A turn: one message handed to the bot's engine and streamed back into the conversation.
  *
- * Hermes owns the agent loop, the history and the tools. This file only
+ * The engine (a Hermes gateway, or a CLI such as Claude Code run as a child process) owns the agent
+ * loop, the history and the tools. This file only
  *  - queues turns so a bot handles one at a time,
  *  - posts the trigger to the engine's /v1/responses endpoint and turns the event stream into
  *    rows (assistant messages, tool calls) and live state (what the bot is doing right now),
@@ -113,6 +117,23 @@ export async function claimToolRow(botId: string, name: string): Promise<number 
     if (!t) return null;
     const ref = t.tools.find((r) => !r.claimed && !r.done && r.name === name);
     if (ref) { ref.claimed = true; return ref.seq; }
+    if (Date.now() > deadline) return null;
+    await sleep(40);
+  }
+}
+
+/**
+ * The tool-call row of a call the engine names by id (a CLI asking permission for it). The stream
+ * announces the call just before the engine asks, so wait a moment for the row.
+ */
+export async function toolRowByCallId(botId: string, callId: string): Promise<number | null> {
+  if (!callId) return null;
+  const deadline = Date.now() + 1500;
+  for (;;) {
+    const t = turns.get(botId);
+    if (!t) return null;
+    const ref = t.tools.find((r) => r.callId === callId);
+    if (ref) return ref.seq;
     if (Date.now() > deadline) return null;
     await sleep(40);
   }
@@ -349,7 +370,96 @@ async function runTurn(botId: string, trigger: Trigger) {
   let steps = 0;
   let failed = false;
 
+  // A bot on a CLI engine: the same turn, read from a child process instead of a Hermes gateway.
+  const cliTurn = async (cli: CliAdapter) => {
+    const session = cliSession(botId);
+    // The whole block of text being streamed arrives again when it is complete.
+    let streamed = false;
+    const events = runCli(cli, {
+      cwd: cliHome(botId).work,
+      prompt: triggerText(trigger),
+      system: await instructionsFor(userId, botId),
+      sessionId: session.id,
+      resume: session.resume,
+      model: bot.model || null,
+      effort: bot.effort ?? null,
+      mcp: { url: `${env.mcpBaseUrl}/mcp/${botId}`, token: mcpToken(botId) },
+      permissionTool: PERMISSION_TOOL,
+    }, ctrl.signal);
+
+    for await (const ev of events) {
+      switch (ev.type) {
+        case 'session':
+          saveCliSession(botId, bot.generation, ev.id);
+          break;
+
+        case 'delta': {
+          if (turn.silent) break;
+          const piece = text ? ev.text : ev.text.trimStart();
+          if (!piece) break;
+          text += piece;
+          wroteText = true;
+          streamed = true;
+          if (msgSeq === null) setLive(botId, { activity: { kind: 'working', since: now() } });
+          if (msgSeq === null || Date.now() - lastFlush > 120) flush(true);
+          break;
+        }
+
+        case 'reasoning':
+          reasoning = (reasoning + ev.text).slice(-4000);
+          caption(captionFrom(reasoning));
+          break;
+
+        case 'text': {
+          if (streamed) {
+            if (msgSeq !== null) { text = ev.text.trimStart(); closeMessage(); }
+          } else say(ev.text);
+          streamed = false;
+          break;
+        }
+
+        case 'tool': {
+          closeMessage();
+          streamed = false;
+          const { name } = appToolName(ev.name);
+          const act = cliActivity(ev.name) ?? activityFor(ev.name);
+          const row = appendRow(botId, 'tool-call', { type: 'tool-call', callId: ev.callId, name, label: act.label, status: 'running', args: ev.args } satisfies ToolCallBody);
+          turn.tools.push({ seq: row.seq, callId: ev.callId, name, claimed: false, done: false });
+          steps++;
+          const kind: ActivityKind = name === 'send_to_bot' ? 'messaging_named' : act.kind;
+          const detail = name === 'send_to_bot' ? String(ev.args?.bot_name ?? '') || undefined : act.detail;
+          if (!getLive(botId).awaiting) setLive(botId, { isRunning: true, activity: { kind, detail, since: now() }, steps, caption: null });
+          else setLive(botId, { steps });
+          reasoning = '';
+          break;
+        }
+
+        case 'tool-result': {
+          const ref = turn.tools.find((r) => r.callId === ev.callId);
+          if (!ref || ref.done) break;
+          ref.done = true;
+          const told = turn.outcomes.get(ref.seq);
+          const guess: Outcome = ev.isError ? { status: 'error', summary: ev.text.trim().slice(0, 200) || 'Failed' } : readOutcome({ output: ev.text });
+          patchToolRow(botId, ref.seq, told?.status && told.status !== 'running' ? told : { status: guess.status, summary: told?.summary ?? guess.summary });
+          if (!getLive(botId).awaiting) setLive(botId, { activity: { kind: 'thinking', since: now() } });
+          break;
+        }
+
+        case 'error':
+          // The CLI lost the conversation (its files are gone): start a fresh one next time.
+          if (session.resume && /no conversation found/i.test(ev.message)) forgetCliSession(botId);
+          throw new Error(ev.message);
+      }
+    }
+  };
+
   try {
+    const cli = cliAdapter(bot.engine);
+    if (cli) {
+      await cliTurn(cli);
+      return;
+    }
+
     // The screen first: the engine's browser and computer tools point at it.
     await screenForWork(userId, botId).catch((e) => console.warn(`[computer] screen not ready for ${botId}: ${e?.message ?? e}`));
     const engine = await engineFor(botId);
