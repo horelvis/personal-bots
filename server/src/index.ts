@@ -45,15 +45,21 @@ if (fs.existsSync(webDist)) {
   app.get('*', (c) => c.html(fs.readFileSync(path.join(webDist, 'index.html'), 'utf8')));
 }
 
-const server = serve({ fetch: app.fetch, port: env.port }, (info) => console.log(`[hq] server on http://localhost:${info.port}`));
+const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
+  console.log(`[hq] server on http://localhost:${info.port}`);
+  // Only a server that really got the port may take the queue and start the schedulers. A second
+  // start on the same database fails to listen a moment later; had it already picked up the stored
+  // turns, it would have run them beside the live server and marked that server's running turn as
+  // interrupted. Nothing can queue a turn before this point: no request is served yet.
+  // GROKBOT_NO_SCHEDULER=1 for extra dev/test servers sharing a database copy, so routines and triggers don't fire twice.
+  if (process.env.GROKBOT_NO_SCHEDULER !== '1') {
+    // First the turns the last stop cut off, so they keep their place ahead of anything queued from now on.
+    recoverTurns();
+    initRoutines(enqueue);
+    void initTriggers(enqueue);
+    initProactive(enqueue);
+  } else console.log('[hq] scheduler disabled (GROKBOT_NO_SCHEDULER=1)');
+});
 attachVncRelay(server as unknown as Server);
-// GROKBOT_NO_SCHEDULER=1 for extra dev/test servers sharing a database copy, so routines and triggers don't fire twice.
-if (process.env.GROKBOT_NO_SCHEDULER !== '1') {
-  // First the turns the last stop cut off, so they keep their place ahead of anything queued from now on.
-  recoverTurns();
-  initRoutines(enqueue);
-  void initTriggers(enqueue);
-initProactive(enqueue);
-} else console.log('[hq] scheduler disabled (GROKBOT_NO_SCHEDULER=1)');
 startIdleWatcher();
 initEngines(toolsStamp(TOOLS));
