@@ -11,7 +11,7 @@ import { instructionsFor } from './prompt.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
 import { cliAdapter, runCli, type CliAdapter } from './cli/index.js';
 import { PERMISSION_TOOL, cliActivity } from './cli/tools.js';
-import { createAsks, type Answer } from './asks.js';
+import { afterAnswer, createAsks, type Answer } from './asks.js';
 
 /**
  * A turn: one message handed to the bot's engine and streamed back into the conversation.
@@ -78,11 +78,7 @@ const asks = createAsks(env.askBotWaitMs);
  * other bot is itself waiting for this one, so the question was not sent.
  */
 export function askBot(fromBotId: string, toBotId: string, text: string, depth: number): Promise<Answer | { status: 'circle' }> {
-  const id = asks.open(fromBotId, toBotId);
-  if (!id) return Promise.resolve({ status: 'circle' });
-  const waiting = asks.wait(id);
-  enqueueBotMessage(fromBotId, toBotId, text, depth, id);
-  return waiting;
+  return asks.ask(fromBotId, toBotId, (id) => enqueueBotMessage(fromBotId, toBotId, text, depth, id));
 }
 
 function triggerText(t: Trigger): string {
@@ -640,9 +636,17 @@ async function runTurn(botId: string, trigger: Trigger) {
     asks.release(botId);
     if (trigger.type === 'bot' && trigger.askId) {
       const reply = said.join('\n\n');
-      // The asker stopped waiting (the limit passed, or its turn ended): the answer goes as a message, as before.
-      if (asks.settle(trigger.askId, reply) === 'late' && reply.trim() && getBotRow(trigger.fromBotId)) {
-        enqueueBotMessage(botId, trigger.fromBotId, reply.slice(0, 12000), trigger.depth + 1);
+      // An asker that stopped waiting (the limit passed, or its turn ended) was told the answer would
+      // come later. This is cleanup: a failure here must not skip what follows.
+      try {
+        const next = afterAnswer(asks.settle(trigger.askId, reply), reply);
+        // Either bot may have been removed in the meantime; then there is nobody to tell, or nobody to tell it from.
+        if (next !== 'nothing' && getBotRow(trigger.fromBotId) && getBotRow(botId)) {
+          if (next === 'send_reply') enqueueBotMessage(botId, trigger.fromBotId, reply.slice(0, 12000), trigger.depth + 1);
+          else enqueue(trigger.fromBotId, { type: 'system', text: `${bot.name} finished without an answer to the question you asked with ask_bot. No answer will arrive; go on without it or tell the user.` });
+        }
+      } catch (e: any) {
+        console.warn(`[agent] ${botId}: could not pass a late answer on: ${e?.message ?? e}`);
       }
     }
     // An approval asked for outside this turn may still be waiting; leave its state alone.

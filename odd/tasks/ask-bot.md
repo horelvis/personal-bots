@@ -22,6 +22,7 @@ Branch: `feat/ask-bot`, stacked on `feat/engine-adapters` (`5a73fba`) because bo
 - [x] T2 (S2,S3,S4,S5,S6) inline: `ask_bot` tool, the loop collecting the asked bot's reply and delivering late answers, prompt and docs.
 - [x] T3 (S7) inline: end-to-end check with two bots (L4).
 All three are in one commit, the one that adds this document.
+- [x] T4 (S4,S5) inline: fixes for the review's findings (L9). Commit: the one that adds this line. Risk: item 4.
 
 Route: inline (one behavior; T2 depends on T1).
 
@@ -49,3 +50,9 @@ Route: inline (one behavior; T2 depends on T1).
   - After "still working", if the asked bot's turn ends with nothing said, the asker is never told that no answer will come.
   - `ASK_BOT_WAIT_SECONDS` has no upper bound: above the 30-minute tool timeout the engine gives up first, and above about 24.8 days the timer fires at once; "0" or text silently becomes 540.
   - The loop wiring and the `ask_bot` result branches have no automated test; timeouts, releases and refused circles leave no log line.
+- L9 (2026-11-16) Offered: fix the three small findings of L8 now, or leave them noted. User (verbatim): "Corrige". Done, RED then GREEN (5 new tests failed first; suite 105 tests, 104 pass, 0 fail, 1 skipped; typecheck clean):
+  - A question whose sending fails is dropped at once (`Asks.ask`), so it no longer blocks the circle check for the whole limit.
+  - Late delivery in `runTurn`'s cleanup is guarded: a failure is logged and the live-state reset still runs; it is skipped when either bot is gone.
+  - After "still working", an asked bot that finishes without saying anything makes the asker receive the notice "<name> finished without an answer to the question you asked with ask_bot. No answer will arrive; go on without it or tell the user." Checked on an isolated server with a stand-in CLI and a 3-second limit: `ask_bot` returned "still working" at 3.0 s, the notice reached the asker as its next turn, and neither bot was left shown as running.
+  - Also: `ASK_BOT_WAIT_SECONDS` is capped at 1500 (25 minutes); an empty, non-numeric, zero or negative value means 540.
+  - Still open from L8: the loop wiring has no automated test beyond the pure rules; timeouts and refused circles leave no log line.
