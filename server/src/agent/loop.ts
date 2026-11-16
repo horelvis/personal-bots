@@ -342,7 +342,11 @@ const TOOLBOX = new Set(['tool_search', 'tool_describe']);
 
 async function runTurn(botId: string, trigger: Trigger) {
   const bot = getBotRow(botId);
-  if (!bot || bot.kind === 'room') return;
+  if (!bot || bot.kind === 'room') {
+    // The bot was removed while this turn sat in its queue: whoever asked it is told there is no answer.
+    if (trigger.type === 'bot' && trigger.askId) asks.settle(trigger.askId, null);
+    return;
+  }
   const userId: string = bot.user_id;
   const ctrl = new AbortController();
   aborts.set(botId, ctrl);
@@ -638,7 +642,7 @@ async function runTurn(botId: string, trigger: Trigger) {
       const reply = said.join('\n\n');
       // The asker stopped waiting (the limit passed, or its turn ended): the answer goes as a message, as before.
       if (asks.settle(trigger.askId, reply) === 'late' && reply.trim() && getBotRow(trigger.fromBotId)) {
-        enqueueBotMessage(botId, trigger.fromBotId, reply, trigger.depth + 1);
+        enqueueBotMessage(botId, trigger.fromBotId, reply.slice(0, 12000), trigger.depth + 1);
       }
     }
     // An approval asked for outside this turn may still be waiting; leave its state alone.
