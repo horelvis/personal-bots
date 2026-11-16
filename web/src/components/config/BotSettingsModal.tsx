@@ -349,7 +349,7 @@ function MemoriesTab({ bot, data, onChange }: { bot: Bot; data: BotSettingsBundl
               <div className="cfg-item__text">
                 <div className="cfg-item__body">{m.text}</div>
                 <div className="cfg-item__meta">
-                  {m.source === 'learned' ? <span className="cfg-chip">Picked up</span> : <span className="cfg-chip cfg-chip--muted">Saved in chat</span>}
+                  {m.shared ? <span className="cfg-chip cfg-chip--muted" title="Another Bot on the team saved this. Forgetting it removes it for every Bot.">From the team</span> : m.source === 'learned' ? <span className="cfg-chip">Picked up</span> : <span className="cfg-chip cfg-chip--muted">Saved in chat</span>}
                   <span>{shortDate(m.createdAt)}</span>
                 </div>
               </div>
