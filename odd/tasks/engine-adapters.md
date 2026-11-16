@@ -1,0 +1,57 @@
+# engine-adapters
+
+Objective: let a bot run on the Claude Code CLI as well as on Hermes, with the app's tools and approval cards working the same (R1 of `docs/requirements-superbot-ideas.md`).
+Branch: `feat/engine-adapters` (from `636cb9d`). Delivery: `ask-on-risk`, to the fork (`origin`) only. Test runner: `npm test` (server, `tsx --test`); `npm run typecheck`.
+Forecast: about 700 authored lines, over the 400-line slice size; slices follow the tasks below.
+
+## Specs
+
+- S1. User (verbatim): "empezar con R1 usando odd". R1 as written in `docs/requirements-superbot-ideas.md`: "Run a bot on a coding-agent CLI (Claude Code, Codex, Pi) as well as Hermes".
+- S2. (R1.1) A bot has an engine type. Hermes stays the default, and existing bots keep working with no migration step by the user.
+- S3. (R1.2) Claude Code is the CLI engine supported now. Codex and Pi are not installed on this machine and are not built here; the adapter boundary must let them be added as one file each.
+- S4. (R1.3) An adapter does only four things: start or resume the bot's session, send a turn in, map the CLI's output to the events the loop already handles (text delta, text, tool call, error), and pass in the bot's persona and memory.
+- S5. (R1.4) A CLI engine uses the CLI already installed and signed in on the machine that runs the bot. The app stores no credentials for it.
+- S6. (R1.5) The user picks the engine when creating a bot and can see which engine a bot uses. Only engines whose CLI is installed are offered.
+- S7. (R1.6) The app's own tools (routines, tasks, bot messaging, Gmail, Calendar, connected apps) reach a CLI-engine bot, and tools that write still wait for the user's approval card.
+- S8. (R1.7, decided by the user) Question asked: "¿cómo se controlan las herramientas propias del CLI (shell, editar archivos, web) cuando un bot las usa?" User chose (verbatim option): "Tarjetas de aprobación (Recommended)" - "Leer y buscar archivos y web va sin preguntar. Ejecutar comandos de shell o escribir/editar archivos espera tu OK en la misma tarjeta (Allow / Always allow / Don't allow) que ya usan Gmail y Composio."
+- S9. Done when (from R1): "A bot created on Claude Code answers in chat with streaming text, shows its tool activity, keeps its session between turns, can call `create_routine` and `gmail_send`, and `gmail_send` stops at an approval card. A Hermes bot created before the change behaves as before."
+- Assumption: the CLI runs on the server host, in a folder of the bot's own under `ENGINES_DIR/<botId>/work` (the only place `claude` is installed and signed in).
+- Assumption: a Claude Code bot has no screen of its own in this version; it does not drive the desktop the app shows. The app does not start a screen for it.
+- Assumption: the child process gets a minimal environment (no app secrets) and loads none of the host user's Claude settings, hooks, plugins, memory files or MCP servers.
+- Assumption: what the CLI itself treats as safe (reading inside the bot's folder, read-only shell commands such as `ls`) runs without a card; anything the CLI would prompt for (writes, other shell commands, reads outside the folder) gets a card. Web search and fetch run without a card.
+- Assumption: "Always allow" on a card applies per CLI tool (all shell commands, or all file writes) for that user, the same grain as today's per-tool policy.
+- Assumption: memory for a Claude Code bot uses the same `memories/MEMORY.md` and `memories/USER.md` files and "§" format under its own home, written through an app tool, so the memory screen works unchanged.
+
+## Tasks
+
+- [x] T1 (S2,S3,S4,S5) inline: engine type `claude`, the adapter (command line, stream parsing, session), and the loop running a turn through it. Commits: `d037e1e` (adapter, runner, permission rules, tests), `47dcfc4` (engine type, session, loop, prompt, routes).
+- [x] T2 (S7,S8) inline: MCP for a CLI bot: permission prompt wired to approval cards, memory tool, tool naming and activity labels. Commit: `f429e1c`. Risk: item 2 (security: permission guard).
+- [x] T3 (S6) inline: pick the engine when creating a bot; show it in the details panel; offer only installed CLIs. Commit: `842e7e3`.
+- [x] T4 (S1,S9) inline: docs (`docs/ARCHITECTURE.md`, `.env.example`) and end-to-end check against the real CLI (L7). Commit: the one that adds this document.
+
+Route: inline for all tasks (no Writer trigger: T2 and T3 depend on T1; one seam, `runTurn`).
+
+## Log
+
+- L1 (2026-11-16) User: "empezar con R1 usando odd".
+- L2 (2026-11-16) Decision asked and answered: built-in CLI tools go through approval cards (see S8).
+- L3 (2026-11-16) Evidence, probes against Claude Code 2.1.325 with a throwaway MCP server (scratch dir, not committed):
+  - `claude -p --output-format stream-json --verbose --include-partial-messages` emits `system/init` (session id, tools), `stream_event` (`content_block_delta` with `text_delta`), `assistant` (full `tool_use` blocks with input), `user` (`tool_result` by `tool_use_id`, `is_error`), `result` (`subtype`, `is_error`, `result`).
+  - `--mcp-config` with `{"type":"http","url",...,"headers":{"Authorization":"Bearer ..."}}` connects; tools appear as `mcp__hq__<name>`. The CLI first calls `server/discover` and falls back to `initialize` (protocol `2025-11-25`).
+  - `--permission-prompt-tool mcp__hq__<tool>` is called with `{tool_name, input, tool_use_id}` and expects text JSON `{"behavior":"allow","updatedInput":input}` or `{"behavior":"deny","message":...}`. A deny reaches the model as an error tool result and the turn continues.
+  - Prompted: `touch x`, `cat a > b`, `env | grep`, Write, Read and `cat` outside the cwd, and MCP tools not in `--allowedTools`. Not prompted: `echo`, Read inside the cwd.
+  - `--session-id <uuid>` then `--resume <uuid>` keeps the conversation. `--setting-sources ""` and `--strict-mcp-config` work. `env -i PATH HOME USER` still authenticates (subscription sign-in).
+  - stdin must be closed (`< /dev/null`), or the CLI waits 3 s for input.
+- L4 (2026-11-16) Evidence: the only engine seam is `engineFor()` at `server/src/agent/loop.ts:355`; `bots.engine` already exists ('primary' | 'managed'); `mcpToken(botId)` and `/mcp/<botId>` work for any bot row; `engineHome()` returns null for unknown kinds, which empties the memory screen.
+- L5 (2026-11-16) State: working tree carried the uncommitted project rename (`personal-bots`) from `main`; it is not part of this feature and is left unstaged.
+- L6 (2026-11-16) RED/GREEN: `claude.test.ts` failed first (module missing), then passed; `tools.test.ts` (permission rules) failed first, then passed. `run.test.ts` was written together with `run.ts` (no RED observed). Suite after the change: 86 tests, 85 pass, 0 fail, 1 skipped. `npm run typecheck` (server and web) and `npm run build -w web` pass.
+- L7 (2026-11-16) End-to-end, isolated server (`mktemp -d` database and engines dir, port 8799, no `.env`) against the real Claude Code CLI, model `haiku`:
+  - A bot created with `engine: "claude"` answered with streaming text; `codex` was refused with "That engine is not installed on this machine."
+  - `create_routine` ran and the routine was listed. `touch made.txt` showed the card "Allow Cody to run a command?" with the command; Allow created the file. `ls` ran without a card.
+  - Second turn: the bot recalled the code word from the first turn (session resumed); `touch denied.txt` was denied on the card, the file was not created, the tool row shows "denied".
+  - `remember` saved "Tester's time zone is Europe/Madrid." and the memory screen's API listed it; a fourth turn answered the time zone from memory.
+  - Write asked with "Allow Cody to write a file?"; "Always allow" stored policy `cli_write` and the next Write ran without a card.
+  - Deleting the bot removed its home. Browser check: the create dialog shows the Engine choice (Hermes / Claude Code) and a Claude Code bot's engine panel shows Model and "Claude Code · ready".
+  - Not checked end to end: `gmail_send` stopping at an approval card for a CLI bot (needs a connected Google account; the path is the unchanged `callTool` code shared with Hermes), and an approval that waits longer than a few seconds (`MCP_TOOL_TIMEOUT` is set to 30 minutes but its effect was not measured).
+- L8 (2026-11-16) Review (RDD on by default): `gentle-ai review assess --base-ref 636cb9d --committed-only` could not assess while the tree had untracked files; per-commit assessment was not run before the next commits were added. Deviation recorded; the branch is assessed at the end.
+- L9 (2026-11-16) Hermes path: `runTurn` returns early for a CLI bot and is otherwise unchanged; `instructionsFor` keeps the Hermes text through the else branch of two conditionals (read in the diff, not compared by running both versions). No Hermes gateway was available on this machine to run a Hermes turn.
