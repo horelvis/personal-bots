@@ -23,6 +23,7 @@ Branch: `feat/durable-queue`, stacked on `feat/shared-user-facts` (`fd547ac`). D
 - [x] T3 (S6) inline: end-to-end check that kills and restarts a server (L4).
 All three are in one commit, the one that adds this document.
 - [x] T4 (S2,S3) inline: correction after independent verification (L6, L7). Commit: the one that adds this line. Risk: item 4.
+- [x] T5 (S2,S3) inline: fixes for four findings of the native review (L9). Commit: the one that adds this line. Risk: item 4.
 
 Route: inline (one behavior; T2 depends on T1).
 
@@ -49,3 +50,13 @@ Route: inline (one behavior; T2 depends on T1).
   - Recovered turns start at once, with no check that their engine is reachable; a turn that fails then is removed like any failed turn, so that queued work is lost after all.
   - `recoverTurns` is not guarded in the listening callback: if it throws, the schedulers after it do not start.
   - Storing, marking and removing rows and `recoverTurns` have no automated test; only the pure plan does.
+- L9 (2026-11-16) Offered: fix the first four findings of L8, or leave them noted. User (verbatim): "continuar"; read as the first option offered (fix them), as said in the reply. Done, RED then GREEN (`turn-store.test.ts`, 8 tests, failed first because the module was missing; then failed on its own setup, a missing `bots` table the queue refers to, which was a test fixture defect, not a code one; then passed). Suite: 132 tests, 131 pass, 0 fail, 1 skipped; typecheck clean.
+  - The queue's database operations moved to `server/src/agent/turn-store.ts` (table definition included), tested against an in-memory database. This also gives the storage path the automated test L8 said it lacked; `recoverTurns` and the loop wiring still have none.
+  - A turn whose `running` mark cannot be written is forgotten first and then runs (a stop can then lose it, never repeat it); if it can be neither marked nor forgotten it is not run and its chat gets "This could not be started because the app could not record it. Send it again.".
+  - An interrupted turn is forgotten in the same transaction that closes its chat; if closing fails, both are rolled back and the next start tries again.
+  - A turn picked up after a restart waits up to two minutes for the primary Hermes gateway before it is marked as started (it stays `queued` while it waits, since nothing has been sent).
+  - `recoverTurns` is guarded in the listening callback, so a failure there no longer keeps routines, triggers and check-ins from starting.
+- L10 (2026-11-16) End-to-end after the fixes, isolated servers (`mktemp -d` data, port 8799, no `.env`):
+  - Primary Hermes bot with a stand-in gateway (`HERMES_URL` on a local port): three messages, the first hung; server and gateway killed; server restarted with the gateway still down. After 6 s the two waiting turns were still `queued` and only the "Interrupted" notice was in the chat; once the gateway came up, both ran ("hermes ok: two", "hermes ok: three"), 9 s after the restart. The gateway received "SLOW one" once.
+  - Claude Code bot with the stand-in CLI: a second start on the same database and port exited 1 with `EADDRINUSE`, recovered nothing and left `1 running, 2 queued, 3 queued` as they were; after `kill -9` and a restart, the `gmail_send` row became error / Interrupted, the notice appeared, the engine got "SLOW one", "two" and "three" once each, and the queue was empty.
+  - Not checked: a failing `running` mark or a failing chat close on a live server (unit tests only), a gateway that stays down for the whole two minutes. No independent verifier was run on this commit; the native review is its outside view, as for the ask-bot fixes.

@@ -370,6 +370,21 @@ export async function engineFor(botId: string): Promise<Engine> {
   return { kind, url, key: managedKey(botId), home: homeFor(botId) };
 }
 
+/**
+ * Wait, up to `maxMs`, until the engine a turn will use can answer. Only the primary Hermes gateway
+ * needs it: a managed gateway is started by `engineFor`, and a CLI engine runs on demand. Used for
+ * turns picked up after a restart, when the gateway may still be coming up. True when ready.
+ */
+export async function waitForEngine(botId: string, maxMs = 120_000): Promise<boolean> {
+  if (engineKind(botId) !== 'primary') return true;
+  const until = Date.now() + maxMs;
+  for (;;) {
+    if (await healthy(env.hermesUrl)) return true;
+    if (Date.now() >= until) return false;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+}
+
 /** The bot's Hermes home, without starting anything (memory files, sign-in commands). */
 export function engineHome(botId: string): string | null {
   const kind = engineKind(botId);

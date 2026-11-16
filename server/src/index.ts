@@ -54,7 +54,8 @@ const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
   // GROKBOT_NO_SCHEDULER=1 for extra dev/test servers sharing a database copy, so routines and triggers don't fire twice.
   if (process.env.GROKBOT_NO_SCHEDULER !== '1') {
     // First the turns the last stop cut off, so they keep their place ahead of anything queued from now on.
-    recoverTurns();
+    // A failure there must not keep the routines, triggers and check-ins from starting.
+    try { recoverTurns(); } catch (e: any) { console.error('[agent] could not pick up the turns from before the restart:', e?.message ?? e); }
     initRoutines(enqueue);
     void initTriggers(enqueue);
     initProactive(enqueue);

@@ -5,14 +5,14 @@ import { appendRow, emitBot, getBotRow, getLive, getRow, setLive, updateRow } fr
 import type { ActivityKind, MessageBody, ToolCallBody } from '../types.js';
 import { toolkitInfo } from '../composio.js';
 import { screenForWork } from '../computer.js';
-import { cliHome, cliSession, engineFor, forgetCliSession, mcpToken, saveCliSession } from '../engine.js';
+import { cliHome, cliSession, engineFor, forgetCliSession, mcpToken, saveCliSession, waitForEngine } from '../engine.js';
 import { env } from '../env.js';
 import { instructionsFor } from './prompt.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
 import { cliAdapter, runCli, type CliAdapter } from './cli/index.js';
 import { PERMISSION_TOOL, cliActivity } from './cli/tools.js';
 import { afterAnswer, createAsks, type Answer } from './asks.js';
-import { planRecovery, type StoredTurn } from './queue-recovery.js';
+import { createTurnStore } from './turn-store.js';
 
 /**
  * A turn: one message handed to the bot's engine and streamed back into the conversation.
@@ -37,32 +37,28 @@ export type Trigger =
 const queues = new Map<string, Promise<void>>();
 const aborts = new Map<string, AbortController>();
 
-/**
- * Keep a queued turn in the database so a restart does not lose it. Null when it could not be stored
- * (the bot is gone, say): the turn still runs, it just would not survive a stop.
- */
-function storeTurn(botId: string, trigger: Trigger): number | null {
-  try {
-    return Number(db.prepare("INSERT INTO turn_queue(bot_id, trigger, state, created_at) VALUES (?,?, 'queued', ?)").run(botId, JSON.stringify(trigger), now()).lastInsertRowid);
-  } catch (e: any) {
-    console.warn(`[agent] ${botId}: a queued turn could not be stored: ${e?.message ?? e}`);
-    return null;
-  }
-}
+// Every queued turn is kept in the database until it ends, so a stop neither loses nor repeats it.
+const turnStore = createTurnStore(db);
 
-/** `stored` is the turn's row when it is already in the database (a turn picked up after a restart). */
+/**
+ * `stored` is the turn's row when it is already in the database: a turn picked up after a restart,
+ * which first waits (a while) for its engine, since the gateway may still be coming up.
+ */
 export function enqueue(botId: string, trigger: Trigger, stored?: number) {
   // A new message from the user supersedes whatever is waiting for their approval.
   if (trigger.type === 'user') expireApprovals(botId);
-  const id = stored ?? storeTurn(botId, trigger);
+  const id = stored ?? turnStore.add(botId, trigger);
   const prev = queues.get(botId) ?? Promise.resolve();
   const next = prev
     .then(async () => {
+      // Still 'queued' while it waits: nothing has been sent yet, so a stop here may run it again.
+      if (stored !== undefined && !(await waitForEngine(botId))) console.warn(`[agent] ${botId}: its engine is still not answering; running the turn picked up after the restart anyway`);
       // From here on the turn counts as started: if the server stops now, it is reported, not run again.
-      if (id !== null) db.prepare("UPDATE turn_queue SET state='running' WHERE id=?").run(id);
-      try { await runTurn(botId, trigger); } finally {
-        if (id !== null) db.prepare('DELETE FROM turn_queue WHERE id=?').run(id);
+      if (turnStore.begin(id) === 'skip') {
+        try { appendRow(botId, 'notice', { type: 'notice', text: 'This could not be started because the app could not record it. Send it again.', tone: 'error' }); emitBot(botId); } catch { /* the database is the problem; the log says so */ }
+        return;
       }
+      try { await runTurn(botId, trigger); } finally { turnStore.end(id); }
     })
     .catch((e) => console.error('[agent] turn failed', botId, e));
   queues.set(botId, next);
@@ -75,16 +71,16 @@ export function enqueue(botId: string, trigger: Trigger, stored?: number) {
  * Call it once, before anything else can queue a turn.
  */
 export function recoverTurns() {
-  const plan = planRecovery(db.prepare('SELECT id, bot_id, state, trigger FROM turn_queue ORDER BY id').all() as StoredTurn[]);
-  const forget = db.prepare('DELETE FROM turn_queue WHERE id=?');
-  for (const id of plan.dropped) forget.run(id);
+  const plan = turnStore.takeRecovery();
   for (const t of plan.interrupted) {
-    forget.run(t.id);
-    try { closeInterruptedTurn(t.botId); } catch (e: any) { console.warn(`[agent] ${t.botId}: could not mark its interrupted turn: ${e?.message ?? e}`); }
+    // The chat is closed and the turn forgotten together; if that fails, the next start tries again.
+    if (turnStore.closeInterrupted(t.id, () => closeInterruptedTurn(t.botId))) {
+      try { emitBot(t.botId); } catch { /* the bot is gone */ }
+    }
   }
   for (const t of plan.resume) {
     if (getBotRow(t.botId)) enqueue(t.botId, t.trigger, t.id);
-    else forget.run(t.id);
+    else turnStore.forget(t.id);
   }
   if (plan.interrupted.length || plan.resume.length) console.log(`[agent] after the restart: ${plan.interrupted.length} turn(s) interrupted, ${plan.resume.length} queued turn(s) picked up`);
 }
@@ -101,7 +97,6 @@ function closeInterruptedTurn(botId: string) {
     else if (b?.type === 'message' && b.streaming) updateRow(botId, r.seq, { ...b, streaming: false });
   }
   appendRow(botId, 'notice', { type: 'notice', text: 'Interrupted: the server restarted while this was running. It was not run again.', tone: 'info' });
-  emitBot(botId);
 }
 
 export function interrupt(botId: string) {
