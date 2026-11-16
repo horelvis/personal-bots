@@ -4,6 +4,7 @@ import { claude } from './claude.js';
 import type { TurnOptions } from './adapter.js';
 
 const base: TurnOptions = {
+  home: '/tmp/bot',
   cwd: '/tmp/bot/work',
   prompt: 'hello',
   system: 'You are Ada.',
@@ -17,14 +18,29 @@ const base: TurnOptions = {
 
 const valueOf = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
 
-test('a first turn starts a session with the given id and sends the prompt last', () => {
+test('a first turn starts a session with the given id', () => {
   const { args } = claude.command(base);
   assert.equal(valueOf(args, '--session-id'), base.sessionId);
   assert.ok(!args.includes('--resume'));
   assert.equal(args[0], '-p');
-  assert.equal(args.at(-1), 'hello');
-  assert.equal(valueOf(args, '--append-system-prompt'), 'You are Ada.');
   assert.equal(valueOf(args, '--output-format'), 'stream-json');
+});
+
+// Other processes on the machine (another bot's shell, `ps`) can read a command line.
+test('nothing private is on the command line: prompt, persona and token travel another way', () => {
+  const c = claude.command({ ...base, prompt: 'my private question', system: 'Private persona and memory.' });
+  const line = c.args.join(' ');
+  assert.ok(!line.includes('my private question'));
+  assert.ok(!line.includes('Private persona'));
+  assert.ok(!line.includes('tok'));
+  assert.equal(c.stdin, 'my private question');
+  const file = (name: string) => c.files.find((f) => f.path === `/tmp/bot/${name}`)?.content ?? '';
+  assert.equal(valueOf(c.args, '--append-system-prompt-file'), '/tmp/bot/system.md');
+  assert.equal(file('system.md'), 'Private persona and memory.');
+  assert.equal(valueOf(c.args, '--mcp-config'), '/tmp/bot/mcp.json');
+  assert.equal(JSON.parse(file('mcp.json')).mcpServers.hq.headers.Authorization, 'Bearer tok');
+  // The files sit beside the work folder, not in it: reading them is a read outside the bot's folder.
+  assert.ok(c.files.every((f) => !f.path.startsWith(base.cwd)));
 });
 
 test('a later turn resumes the session instead of starting one', () => {
@@ -47,10 +63,9 @@ test("the host user's settings and MCP servers are left out", () => {
   const { args } = claude.command(base);
   assert.equal(valueOf(args, '--setting-sources'), '');
   assert.ok(args.includes('--strict-mcp-config'));
-  const cfg = JSON.parse(valueOf(args, '--mcp-config'));
+  const cfg = JSON.parse(claude.command(base).files.find((f) => f.path.endsWith('mcp.json'))!.content);
   assert.deepEqual(Object.keys(cfg.mcpServers), ['hq']);
   assert.equal(cfg.mcpServers.hq.url, base.mcp.url);
-  assert.equal(cfg.mcpServers.hq.headers.Authorization, 'Bearer tok');
 });
 
 test('model and effort are passed only when set', () => {
@@ -60,10 +75,10 @@ test('model and effort are passed only when set', () => {
   assert.equal(valueOf(args, '--effort'), 'high');
 });
 
-test('a prompt that looks like a flag is still sent as the prompt', () => {
-  const { args } = claude.command({ ...base, prompt: '--help' });
-  assert.equal(args.at(-2), '--');
-  assert.equal(args.at(-1), '--help');
+test('a prompt that looks like a flag cannot become one', () => {
+  const c = claude.command({ ...base, prompt: '--dangerously-skip-permissions' });
+  assert.ok(!c.args.includes('--dangerously-skip-permissions'));
+  assert.equal(c.stdin, '--dangerously-skip-permissions');
 });
 
 test('init gives the session id', () => {

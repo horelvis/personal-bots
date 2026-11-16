@@ -28,6 +28,7 @@ Forecast: about 700 authored lines, over the 400-line slice size; slices follow 
 - [x] T2 (S7,S8) inline: MCP for a CLI bot: permission prompt wired to approval cards, memory tool, tool naming and activity labels. Commit: `f429e1c`. Risk: item 2 (security: permission guard).
 - [x] T3 (S6) inline: pick the engine when creating a bot; show it in the details panel; offer only installed CLIs. Commit: `842e7e3`.
 - [x] T4 (S1,S9) inline: docs (`docs/ARCHITECTURE.md`, `.env.example`) and end-to-end check against the real CLI (L7). Commit: the one that adds this document.
+- [x] T5 (S8) inline: correction after independent verification (B1-B3 in L10). Commit: the one that adds this line. Risk: item 2.
 
 Route: inline for all tasks (no Writer trigger: T2 and T3 depend on T1; one seam, `runTurn`).
 
@@ -55,3 +56,15 @@ Route: inline for all tasks (no Writer trigger: T2 and T3 depend on T1; one seam
   - Not checked end to end: `gmail_send` stopping at an approval card for a CLI bot (needs a connected Google account; the path is the unchanged `callTool` code shared with Hermes), and an approval that waits longer than a few seconds (`MCP_TOOL_TIMEOUT` is set to 30 minutes but its effect was not measured).
 - L8 (2026-11-16) Review (RDD on by default): `gentle-ai review assess --base-ref 636cb9d --committed-only` could not assess while the tree had untracked files; per-commit assessment was not run before the next commits were added. Deviation recorded; the branch is assessed at the end.
 - L9 (2026-11-16) Hermes path: `runTurn` returns early for a CLI bot and is otherwise unchanged; `instructionsFor` keeps the Hermes text through the else branch of two conditionals (read in the diff, not compared by running both versions). No Hermes gateway was available on this machine to run a Hermes turn.
+- L10 (2026-11-16) Independent verification (in-repo clone, 4 real CLI turns). S2-S7 pass; S9 pass except `gmail_send` (not run); S8 failed with three blockers:
+  - B1: the MCP bearer token was in argv (`--mcp-config` JSON); `ps auxww` runs without a card and showed a live token of any bot mid-turn.
+  - B2: with the work folder inside the app repository, read-only git (`git show HEAD:file`, `git log --format=%ae`, `git ls-files --others`) read the repository without a card.
+  - B3: the card showed only the first 1200 characters of a command; a tail such as `; rm -rf ~/important` was approved unseen.
+  - Held (carded and denied, no side effects): reads outside the folder by Read/Grep/Glob/cat/symlink/`cd ..`/`$(...)`; `find -exec`, redirects, `sed -i`, `git branch`/`tag`, `python3 -c`; `printenv`, `ps eww`; repo `CLAUDE.md` and `.claude/settings.json` ignored; permission endpoint denies on missing tool name, a Hermes bot, another bot's token, interrupt.
+  - Hermes: `instructionsFor` hashes identically on `636cb9d` and HEAD for a primary and a managed bot.
+  - Advisories, not changed: WebFetch runs without a card (documented assumption; it can reach local services and carry out what the bot may read); "Always allow" on one outside read allows every outside read (documented grain); model credentials set in the server's environment reach the child; an unknown tool name from a Hermes bot opens a card (existing Composio path).
+- L11 (2026-11-16) Correction batch for B1-B3, RED then GREEN (6 failing tests first; suite now 90 tests, 89 pass, 0 fail, 1 skipped):
+  - B1: prompt on stdin; persona and MCP config in `<home>/system.md` and `<home>/mcp.json` (mode 600, home 700, outside the work folder); nothing private in argv. Probe: `cat ../mcp.json` is carded.
+  - B2: `GIT_CEILING_DIRECTORIES=<home>`. Probe in an in-repo folder: `git status` and `git log` answer "not a git repository"; `git -C <repo>` and `git --git-dir=` are carded.
+  - B3: a command or path over 2000 characters is refused without a card; shorter ones are shown whole.
+  - Advisory taken: the bot home is now mode 700.

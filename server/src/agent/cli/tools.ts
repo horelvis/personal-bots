@@ -26,23 +26,39 @@ export const CLI_TOOL_DEFS = [
 
 const OURS = /^mcp__hq__(.+)$/;
 
-/** The card for a built-in tool call the CLI wants permission for. `key` is what "Always allow" remembers. */
-export function permissionRule(tool: string, input: any): { key: string; title: string; detail?: string } {
-  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.slice(0, 1200) : undefined);
+/** The most a card shows of a command or path. Longer ones are refused, never shown cut short. */
+export const CARD_DETAIL_LIMIT = 2000;
+
+export interface PermissionRule {
+  /** What "Always allow" remembers. */
+  key: string;
+  title: string;
+  /** What the card shows the user: the whole command or path. */
+  detail?: string;
+  /** The command or path does not fit on a card, so the user cannot see all of what they would approve. */
+  tooLong?: true;
+}
+
+/** The card for a built-in tool call the CLI wants permission for. */
+export function permissionRule(tool: string, input: any): PermissionRule {
+  const rule = (key: string, title: string, shown: unknown): PermissionRule => {
+    if (typeof shown !== 'string' || !shown.trim()) return { key, title, detail: undefined };
+    return shown.length > CARD_DETAIL_LIMIT ? { key, title, tooLong: true } : { key, title, detail: shown };
+  };
   switch (tool) {
     case 'Bash':
-      return { key: 'cli_bash', title: 'Shell: run a command', detail: str(input?.command) };
+      return rule('cli_bash', 'Shell: run a command', input?.command);
     case 'Write':
-      return { key: 'cli_write', title: 'Files: write a file', detail: str(input?.file_path) };
+      return rule('cli_write', 'Files: write a file', input?.file_path);
     case 'Edit':
     case 'MultiEdit':
     case 'NotebookEdit':
-      return { key: 'cli_edit', title: 'Files: edit a file', detail: str(input?.file_path ?? input?.notebook_path) };
+      return rule('cli_edit', 'Files: edit a file', input?.file_path ?? input?.notebook_path);
     case 'Read':
     case 'Glob':
     case 'Grep':
       // Reading inside its own folder never reaches the prompt; this is a read somewhere else.
-      return { key: 'cli_read', title: 'Files: read outside its folder', detail: str(input?.file_path ?? input?.path ?? input?.pattern) };
+      return rule('cli_read', 'Files: read outside its folder', input?.file_path ?? input?.path ?? input?.pattern);
   }
   return { key: `cli_${tool.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, title: `${tool}: use this tool` };
 }

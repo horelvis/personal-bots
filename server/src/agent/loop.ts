@@ -375,8 +375,10 @@ async function runTurn(botId: string, trigger: Trigger) {
     const session = cliSession(botId);
     // The whole block of text being streamed arrives again when it is complete.
     let streamed = false;
+    const { home, work } = cliHome(botId);
     const events = runCli(cli, {
-      cwd: cliHome(botId).work,
+      home,
+      cwd: work,
       prompt: triggerText(trigger),
       system: await instructionsFor(userId, botId),
       sessionId: session.id,

@@ -9,6 +9,17 @@ test('a shell command asks under one key and shows the command', () => {
   assert.equal(r.detail, 'rm -rf build');
 });
 
+// A card must show everything it approves: a command cut short could hide what it really does.
+test('a command too long to show whole cannot be approved', () => {
+  const long = `echo ${'a'.repeat(3000)} ; rm -rf ~/important`;
+  const r = permissionRule('Bash', { command: long });
+  assert.equal(r.tooLong, true);
+  assert.equal(permissionRule('Bash', { command: 'ls -la' }).tooLong, undefined);
+  const fits = `echo ${'a'.repeat(1900)}`;
+  assert.equal(permissionRule('Bash', { command: fits }).detail, fits);
+  assert.equal(permissionRule('Write', { file_path: `/w/${'d'.repeat(3000)}` }).tooLong, true);
+});
+
 test('writing and editing files ask under their own keys and show the path', () => {
   assert.deepEqual(permissionRule('Write', { file_path: '/w/a.txt', content: 'x' }), { key: 'cli_write', title: 'Files: write a file', detail: '/w/a.txt' });
   assert.deepEqual(permissionRule('Edit', { file_path: '/w/a.txt', old_string: 'a', new_string: 'b' }), { key: 'cli_edit', title: 'Files: edit a file', detail: '/w/a.txt' });

@@ -77,6 +77,11 @@ async function answerPermission(userId: string, botId: string, args: any): Promi
       noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Not allowed' });
       return text(permissionAnswer('deny', input, DECLINED));
     }
+    if (rule.tooLong) {
+      // The user would approve something they cannot read in full.
+      noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Too long to show for approval' });
+      return text(permissionAnswer('deny', input, 'This is too long to show the user for approval, so it was not run. Do it in shorter steps (for a long script, write it to a file first, then run the file).'));
+    }
     const answer = await requestApproval({ userId, botId }, rule, input ?? {}, rowSeq);
     if (answer === 'allow') return text(permissionAnswer('allow', input));
     return text(permissionAnswer('deny', input, answer === 'deny' ? DECLINED : SKIPPED));
