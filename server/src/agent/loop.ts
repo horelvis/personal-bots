@@ -12,7 +12,7 @@ import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
 import { cliAdapter, runCli, type CliAdapter } from './cli/index.js';
 import { PERMISSION_TOOL, cliActivity } from './cli/tools.js';
 import { afterAnswer, createAsks, type Answer } from './asks.js';
-import { createTurnStore } from './turn-store.js';
+import { beginWithRetry, createTurnStore, shareWait } from './turn-store.js';
 
 /**
  * A turn: one message handed to the bot's engine and streamed back into the conversation.
@@ -39,6 +39,11 @@ const aborts = new Map<string, AbortController>();
 
 // Every queued turn is kept in the database until it ends, so a stop neither loses nor repeats it.
 const turnStore = createTurnStore(db);
+// After a restart, a bot's turns wait for its engine once, not once each.
+const engineAfterRestart = shareWait((botId) => {
+  setLive(botId, { isRunning: true, activity: { kind: 'working', since: now() }, caption: 'Waiting for its agent to come back after a restart' });
+  return waitForEngine(botId);
+});
 
 /**
  * `stored` is the turn's row when it is already in the database: a turn picked up after a restart,
@@ -52,10 +57,12 @@ export function enqueue(botId: string, trigger: Trigger, stored?: number) {
   const next = prev
     .then(async () => {
       // Still 'queued' while it waits: nothing has been sent yet, so a stop here may run it again.
-      if (stored !== undefined && !(await waitForEngine(botId))) console.warn(`[agent] ${botId}: its engine is still not answering; running the turn picked up after the restart anyway`);
+      if (stored !== undefined && !(await engineAfterRestart(botId))) console.warn(`[agent] ${botId}: its engine is still not answering; running the turn picked up after the restart anyway`);
       // From here on the turn counts as started: if the server stops now, it is reported, not run again.
-      if (turnStore.begin(id) === 'skip') {
-        try { appendRow(botId, 'notice', { type: 'notice', text: 'This could not be started because the app could not record it. Send it again.', tone: 'error' }); emitBot(botId); } catch { /* the database is the problem; the log says so */ }
+      if ((await beginWithRetry(turnStore, id)) === 'later') {
+        // It stays queued, so the next start of the server runs it once. Not asked to be sent again:
+        // that copy and this one would both run.
+        try { appendRow(botId, 'notice', { type: 'notice', text: 'This could not be started because the app could not record it. It will run when the server next starts; no need to send it again.', tone: 'error' }); emitBot(botId); } catch { /* the database is the problem; the log says so */ }
         return;
       }
       try { await runTurn(botId, trigger); } finally { turnStore.end(id); }

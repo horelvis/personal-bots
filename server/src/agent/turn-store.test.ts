@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { TURN_QUEUE_DDL, createTurnStore } from './turn-store.js';
+import { TURN_QUEUE_DDL, beginWithRetry, createTurnStore, shareWait } from './turn-store.js';
 
 function setup() {
   const db = new Database(':memory:');
@@ -93,4 +93,59 @@ test('forget removes one turn', () => {
   const b = store.add('a', msg('y'))!;
   store.forget(a);
   assert.deepEqual(rows().map((r: any) => r.id), [b]);
+});
+
+// A database that fails for a moment should not cost the user a turn, nor make them send it twice.
+test('a turn that cannot be started is tried again in its place, and starts once the database answers', async () => {
+  const { db, store, rows } = setup();
+  const id = store.add('a', msg('send the email'))!;
+  db.exec("CREATE TRIGGER no_mark BEFORE UPDATE ON turn_queue BEGIN SELECT RAISE(ABORT, 'database is busy'); END;");
+  db.exec("CREATE TRIGGER no_forget BEFORE DELETE ON turn_queue BEGIN SELECT RAISE(ABORT, 'database is busy'); END;");
+  const waits: number[] = [];
+  const started = beginWithRetry(store, id, [10, 20, 30], async (ms) => {
+    waits.push(ms);
+    if (waits.length === 2) db.exec('DROP TRIGGER no_mark; DROP TRIGGER no_forget;');
+  });
+  assert.equal(await started, 'run');
+  assert.deepEqual(waits, [10, 20]);
+  assert.deepEqual(rows(), [{ id, bot_id: 'a', state: 'running' }]);
+});
+
+test('a turn that still cannot be started is left queued for the next start', async () => {
+  const { db, store, rows } = setup();
+  const id = store.add('a', msg('send the email'))!;
+  db.exec("CREATE TRIGGER no_mark BEFORE UPDATE ON turn_queue BEGIN SELECT RAISE(ABORT, 'database is busy'); END;");
+  db.exec("CREATE TRIGGER no_forget BEFORE DELETE ON turn_queue BEGIN SELECT RAISE(ABORT, 'database is busy'); END;");
+  const waits: number[] = [];
+  assert.equal(await beginWithRetry(store, id, [1, 2], async (ms) => { waits.push(ms); }), 'later');
+  assert.deepEqual(waits, [1, 2]);
+  // Still queued: the next start runs it, once.
+  assert.deepEqual(rows(), [{ id, bot_id: 'a', state: 'queued' }]);
+  db.exec('DROP TRIGGER no_mark; DROP TRIGGER no_forget;');
+  assert.deepEqual(store.takeRecovery().resume.map((r) => r.id), [id]);
+});
+
+test('a turn that starts at once does not wait', async () => {
+  const { store } = setup();
+  const id = store.add('a', msg('x'))!;
+  let waited = false;
+  assert.equal(await beginWithRetry(store, id, [1000], async () => { waited = true; }), 'run');
+  assert.equal(waited, false);
+});
+
+// After a restart all of a bot's turns wait for the same engine: one wait, not one per turn.
+test('the engine wait after a restart is shared by every turn of the same bot', async () => {
+  const calls: string[] = [];
+  let release!: (v: boolean) => void;
+  const wait = shareWait((botId) => { calls.push(botId); return new Promise<boolean>((r) => { release = r; }); });
+  const a1 = wait('a');
+  const a2 = wait('a');
+  const b1 = wait('b');
+  assert.deepEqual(calls, ['a', 'b']);
+  release(true);
+  assert.equal(await b1, true);
+  // Every later turn of 'a' gets the same answer without waiting again.
+  assert.equal(a1, a2);
+  assert.equal(wait('a'), a1);
+  assert.deepEqual(calls, ['a', 'b']);
 });

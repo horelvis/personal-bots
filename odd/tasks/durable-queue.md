@@ -24,6 +24,7 @@ Branch: `feat/durable-queue`, stacked on `feat/shared-user-facts` (`fd547ac`). D
 All three are in one commit, the one that adds this document.
 - [x] T4 (S2,S3) inline: correction after independent verification (L6, L7). Commit: the one that adds this line. Risk: item 4.
 - [x] T5 (S2,S3) inline: fixes for four findings of the native review (L9). Commit: the one that adds this line. Risk: item 4.
+- [x] T6 (S2,S3) inline: fixes for the two findings of L11 introduced by `050712a` (L12). Commit: the one that adds this line. Risk: item 4.
 
 Route: inline (one behavior; T2 depends on T1).
 
@@ -67,3 +68,7 @@ Route: inline (one behavior; T2 depends on T1).
   - A close that fails every time keeps the interrupted row forever, retried at each start, and the user never gets the notice.
   - If `end()` cannot remove a finished turn's row, the next start reports it as "Interrupted" although it finished (logged, not shown).
   - `waitForEngine` and the recovery wiring in `loop.ts` have no automated test.
+- L12 (2026-11-16) Offered: fix the two findings of L11 introduced by `050712a`, or leave them noted. User (verbatim): "corige" ("corrige"). Done, RED then GREEN (4 new tests in `turn-store.test.ts` failed first; suite 136 tests, 135 pass, 0 fail, 1 skipped; typecheck clean):
+  - A turn whose start can be neither recorded nor forgotten is tried again in its place (2, 5, 15, 30 and 60 s; `beginWithRetry`). If it still cannot start, it stays `queued` and its chat says "This could not be started because the app could not record it. It will run when the server next starts; no need to send it again.", so it runs once, at the next start, and is never asked to be sent twice. The retry holds that bot's queue, which keeps the order of its turns.
+  - After a restart a bot's recovered turns share one engine wait (`shareWait`), and the bot is shown as running with "Waiting for its agent to come back after a restart" meanwhile. Checked end to end with the primary Hermes gateway down for the whole time and two recovered turns: the queue was released 123 s after the restart (one wait, against about 240 s before), each turn then failed with a notice in its chat ("Something went wrong: fetch failed"), and the bot was shown as waiting during the wait.
+  - Still open from L11: unguarded `forget` calls in recovery, a close that always fails retries at each start, a finished turn whose row could not be removed is later reported as interrupted, and `waitForEngine` and the loop wiring have no automated test. The retry path on a live server was checked by unit tests only.
