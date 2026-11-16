@@ -15,6 +15,8 @@ Status: proposed. Nothing here is scheduled or authorized for implementation. Ea
 
 ## R1. Engine adapters
 
+**Status (2026-11-16).** Built for Claude Code on branch `feat/engine-adapters`; see `odd/tasks/engine-adapters.md`. Its remaining risk is listed under [Open risks from R1](#open-risks-from-r1).
+
 **Today.** Every bot is run by a Hermes agent (`server/src/engine.ts`). The agent loop gets a Hermes gateway from `engineFor()` at one place (`server/src/agent/loop.ts:355`) and talks to its HTTP API.
 
 **Requirement.**
@@ -82,6 +84,22 @@ Status: proposed. Nothing here is scheduled or authorized for implementation. Ea
 - R4.4 After a restart no bot is left shown as running when nothing is running.
 
 **Done when.** With two messages queued for one bot, the server is killed during the first: after the restart the first shows as interrupted and is not repeated, and the second runs. A `gmail_send` that was in flight is not sent a second time.
+
+## Open risks from R1
+
+R1 is high risk (security): the CLI's permission prompt, turned into an approval card, is what decides whether a bot runs a command or writes a file on the server's machine. Independent verification and the native review found and closed three ways around the cards. What follows was left open on purpose, accepted by the user on 2026-11-16 and noted here so a later requirement can close it. None of it is scheduled.
+
+| ID | Risk | What would close it |
+|----|------|---------------------|
+| K1 | **No isolation.** A CLI bot runs on the server host as the server's user. The card is the only barrier: an approved command can do whatever that user can | Run the CLI inside a container (the Docker box that already hosts the screens), with Claude Code installed and signed in there. Largest reduction: a bypass would stay inside the container |
+| K2 | **The CLI decides what is safe.** Claude Code chooses which shell commands are read-only and need no card. Verification already found unexpected ones (`ps`, read-only git), and a CLI update can change the list without notice | K1; or pin the CLI version and re-run the verifier's probes on each upgrade; or an explicit allowlist of commands that skip the card |
+| K3 | **Web reads have no card.** WebFetch and WebSearch are pre-allowed, so a bot can send out what it may read without a card (its folder, its persona and memory) and can reach services that listen only on the host | Ask for a card per new domain, or block loopback and private addresses; K1 narrows what there is to reach |
+| K4 | **"Always allow" is broad.** One click on a shell card allows every shell command for all of that user's CLI bots; the same for reads outside the folder | Remember the choice per bot, or per command pattern, and never offer it for `cli_bash` and `cli_read` |
+| K5 | **A Write card shows the path, not the content** | Show the content (or its first lines and size) on the card |
+| K6 | **Model credentials reach the child.** `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, when set in the server's environment, are in the CLI's environment; only the card on reading the environment protects them | Prefer the CLI's own sign-in; K1 |
+| K7 | **No automated test of the guard's wiring.** The permission rules and the adapter are tested; the path from the CLI's prompt to the card (`mcp.ts`, `loop.ts`) was checked by hand and by the verifier only | An integration test with a stand-in CLI and a test database |
+
+Not verified in R1, to check when the setup allows: a write tool of the app (`gmail_send`) stopping at a card for a CLI bot, a real Hermes turn after the change, and approvals that wait for minutes.
 
 ## Considered and left out
 
