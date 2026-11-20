@@ -25,7 +25,7 @@ export interface TurnStore {
   /**
    * The turn's place in the queue has come. 'run' once it is marked as started (or is not stored at
    * all); 'skip' when that cannot be recorded and the row cannot be removed either, because running
-   * it then could make it run a second time after a stop.
+   * it then could make it run a second time after a stop. See `beginWithRetry`.
    */
   begin(id: number | null): 'run' | 'skip';
   /** The turn ended, however it ended. */
@@ -98,5 +98,31 @@ export function createTurnStore(db: Database.Database): TurnStore {
         return false;
       }
     },
+  };
+}
+
+/** How long to wait between tries to start a turn whose start could not be recorded. About 2 minutes in all. */
+export const START_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
+
+/**
+ * Start a turn, trying again in its place while its start cannot be recorded (a busy or failing
+ * database). 'later' when it never could: the turn is left queued, so the next start of the server
+ * runs it, once. It is never left for the user to send again, which would make it run twice.
+ */
+export async function beginWithRetry(store: TurnStore, id: number | null, delays = START_RETRY_MS, sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))): Promise<'run' | 'later'> {
+  for (let i = 0; ; i++) {
+    if (store.begin(id) === 'run') return 'run';
+    if (i >= delays.length) return 'later';
+    await sleep(delays[i]);
+  }
+}
+
+/** One wait per key, shared by every caller: after a restart, all of a bot's turns wait for its engine once. */
+export function shareWait(wait: (key: string) => Promise<boolean>): (key: string) => Promise<boolean> {
+  const waits = new Map<string, Promise<boolean>>();
+  return (key) => {
+    let w = waits.get(key);
+    if (!w) { w = wait(key); waits.set(key, w); }
+    return w;
   };
 }
