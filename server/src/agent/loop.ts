@@ -12,6 +12,7 @@ import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
 import { cliAdapter, runCli, type CliAdapter } from './cli/index.js';
 import { PERMISSION_TOOL, cliActivity } from './cli/tools.js';
 import { afterAnswer, createAsks, type Answer } from './asks.js';
+import { planRecovery, type StoredTurn } from './queue-recovery.js';
 
 /**
  * A turn: one message handed to the bot's engine and streamed back into the conversation.
@@ -36,13 +37,71 @@ export type Trigger =
 const queues = new Map<string, Promise<void>>();
 const aborts = new Map<string, AbortController>();
 
-export function enqueue(botId: string, trigger: Trigger) {
+/**
+ * Keep a queued turn in the database so a restart does not lose it. Null when it could not be stored
+ * (the bot is gone, say): the turn still runs, it just would not survive a stop.
+ */
+function storeTurn(botId: string, trigger: Trigger): number | null {
+  try {
+    return Number(db.prepare("INSERT INTO turn_queue(bot_id, trigger, state, created_at) VALUES (?,?, 'queued', ?)").run(botId, JSON.stringify(trigger), now()).lastInsertRowid);
+  } catch (e: any) {
+    console.warn(`[agent] ${botId}: a queued turn could not be stored: ${e?.message ?? e}`);
+    return null;
+  }
+}
+
+/** `stored` is the turn's row when it is already in the database (a turn picked up after a restart). */
+export function enqueue(botId: string, trigger: Trigger, stored?: number) {
   // A new message from the user supersedes whatever is waiting for their approval.
   if (trigger.type === 'user') expireApprovals(botId);
+  const id = stored ?? storeTurn(botId, trigger);
   const prev = queues.get(botId) ?? Promise.resolve();
-  const next = prev.then(() => runTurn(botId, trigger)).catch((e) => console.error('[agent] turn failed', botId, e));
+  const next = prev
+    .then(async () => {
+      // From here on the turn counts as started: if the server stops now, it is reported, not run again.
+      if (id !== null) db.prepare("UPDATE turn_queue SET state='running' WHERE id=?").run(id);
+      try { await runTurn(botId, trigger); } finally {
+        if (id !== null) db.prepare('DELETE FROM turn_queue WHERE id=?').run(id);
+      }
+    })
+    .catch((e) => console.error('[agent] turn failed', botId, e));
   queues.set(botId, next);
   next.finally(() => { if (queues.get(botId) === next) queues.delete(botId); });
+}
+
+/**
+ * On server start: deal with the turns the last stop cut off. A turn that was running is closed in
+ * its chat as interrupted and is not run again; the turns that were waiting run, in their order.
+ * Call it once, before anything else can queue a turn.
+ */
+export function recoverTurns() {
+  const plan = planRecovery(db.prepare('SELECT id, bot_id, state, trigger FROM turn_queue ORDER BY id').all() as StoredTurn[]);
+  const forget = db.prepare('DELETE FROM turn_queue WHERE id=?');
+  for (const id of plan.dropped) forget.run(id);
+  for (const t of plan.interrupted) {
+    forget.run(t.id);
+    try { closeInterruptedTurn(t.botId); } catch (e: any) { console.warn(`[agent] ${t.botId}: could not mark its interrupted turn: ${e?.message ?? e}`); }
+  }
+  for (const t of plan.resume) {
+    if (getBotRow(t.botId)) enqueue(t.botId, t.trigger, t.id);
+    else forget.run(t.id);
+  }
+  if (plan.interrupted.length || plan.resume.length) console.log(`[agent] after the restart: ${plan.interrupted.length} turn(s) interrupted, ${plan.resume.length} queued turn(s) picked up`);
+}
+
+/** Close what a cut-off turn left open in the bot's chat, and say what happened. */
+function closeInterruptedTurn(botId: string) {
+  const bot = getBotRow(botId);
+  if (!bot) return;
+  const open = db.prepare("SELECT seq, body FROM rows WHERE bot_id=? AND generation=? AND kind IN ('tool-call','message') ORDER BY seq DESC LIMIT 200").all(botId, bot.generation) as { seq: number; body: string }[];
+  for (const r of open) {
+    let b: any;
+    try { b = JSON.parse(r.body); } catch { continue; }
+    if (b?.type === 'tool-call' && (b.status === 'running' || b.status === 'awaiting-approval')) updateRow(botId, r.seq, { ...b, status: 'error', summary: 'Interrupted' });
+    else if (b?.type === 'message' && b.streaming) updateRow(botId, r.seq, { ...b, streaming: false });
+  }
+  appendRow(botId, 'notice', { type: 'notice', text: 'Interrupted: the server restarted while this was running. It was not run again.', tone: 'info' });
+  emitBot(botId);
 }
 
 export function interrupt(botId: string) {
