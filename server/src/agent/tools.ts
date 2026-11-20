@@ -20,6 +20,8 @@ export interface ToolCtx {
   userId: string;
   botId: string;
   enqueueBotMessage: (fromBotId: string, toBotId: string, text: string, depth: number) => void;
+  /** Ask another bot and wait for the reply it writes in its own chat (see agent/asks.ts). */
+  askBot: (fromBotId: string, toBotId: string, text: string, depth: number) => Promise<{ status: 'answered'; text: string } | { status: 'no_answer' | 'timeout' | 'circle' }>;
   depth: number;
 }
 
@@ -279,6 +281,32 @@ export const TOOLS: ToolDef[] = [
       if (ctx.depth >= 3) return { output: 'Too many hops between bots; answer the user directly instead.' };
       ctx.enqueueBotMessage(ctx.botId, target.id, String(a.message), ctx.depth + 1);
       return { output: `Sent to ${target.name}. Their reply will come back to you as a message.`, summary: `Messaged ${target.name}` };
+    },
+  },
+  {
+    name: 'ask_bot',
+    description: "Ask another Bot on the user's team (by name) a question and wait for their answer, which comes back as the result of this call. Use it when you need the answer to go on. The other Bot answers in its own chat. If they take too long, you are told so and the answer arrives later as a message. To hand off work without waiting, use send_to_bot.",
+    parameters: obj({ bot_name: { type: 'string' }, question: { type: 'string' } }, ['bot_name', 'question']),
+    activity: 'messaging_named',
+    label: 'Asking a Bot',
+    impl: async (a, ctx) => {
+      const target = botByName(ctx.userId, a.bot_name);
+      if (!target) return { output: `No bot named "${a.bot_name}". Team: ${(db.prepare('SELECT name FROM bots WHERE user_id=?').all(ctx.userId) as any[]).map((b) => b.name).join(', ')}` };
+      if (target.id === ctx.botId) return { output: 'That is you.' };
+      if (target.kind === 'room') return { output: `"${target.name}" is a group chat; use post_to_group instead.` };
+      if (ctx.depth >= 3) return { output: 'Too many hops between bots; answer the user directly instead.' };
+      if (typeof a.question !== 'string' || !a.question.trim()) return { output: 'Give the question to ask.' };
+      const r = await ctx.askBot(ctx.botId, target.id, a.question.trim(), ctx.depth + 1);
+      switch (r.status) {
+        case 'answered':
+          return { output: `${target.name} answered:\n${r.text.slice(0, 12000)}`, summary: `Asked ${target.name}` };
+        case 'no_answer':
+          return { output: `${target.name} finished without an answer for you. Do not ask again; go on without it or tell the user.`, summary: `${target.name} did not answer` };
+        case 'timeout':
+          return { output: `${target.name} is still working on it. Their answer will arrive later as a message; do not ask again.`, summary: `${target.name} is still working` };
+        case 'circle':
+          return { output: `${target.name} is waiting for an answer from you right now, so asking them back would leave you both waiting. Answer them first.`, summary: 'Not sent' };
+      }
     },
   },
   {
