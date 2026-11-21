@@ -1,6 +1,6 @@
 # Third-party notices
 
-personalBot is a fork of Bot HQ (https://github.com/nickvasilescu/bot-hq) and is MIT-licensed like it (see `LICENSE`). It bundles or depends on the third-party work listed below. npm dependencies not listed here are covered by their own licenses, included in their packages.
+personal-bots is a fork of Bot HQ (https://github.com/nickvasilescu/bot-hq) and is MIT-licensed like it (see `LICENSE`). It bundles or depends on the third-party work listed below. npm dependencies not listed here are covered by their own licenses, included in their packages.
 
 ## Lucide icons
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/readme-banner.svg" alt="personalBot. Your team. Their own computers." width="100%">
+  <img src="assets/readme-banner.svg" alt="personal-bots. Your team. Their own computers." width="100%">
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@
   </picture>
 </p>
 
-> **Fork notice.** personalBot is a fork of [Bot HQ](https://github.com/nickvasilescu/bot-hq) by Nick Vasilescu, under the same [MIT license](LICENSE). See [License and credits](#license-and-credits).
+> **Fork notice.** personal-bots is a fork of [Bot HQ](https://github.com/nickvasilescu/bot-hq) by Nick Vasilescu, under the same [MIT license](LICENSE). See [License and credits](#license-and-credits).
 
 ---
 
@@ -67,7 +67,7 @@ The interface is modeled on Grok Bot. Underneath, every bot is a Hermes agent, s
 
 ```mermaid
 flowchart LR
-  B["Browser<br/>chat · viewer · voice"] -- "HTTP + SSE" --> S["personalBot server<br/>Node · Hono · SQLite"]
+  B["Browser<br/>chat · viewer · voice"] -- "HTTP + SSE" --> S["personal-bots server<br/>Node · Hono · SQLite"]
   B -- "WebSocket (VNC)" --> S
   S -- "POST /v1/responses" --> H1["Hermes gateway<br/>first bot (already running)"]
   S -- "POST /v1/responses" --> H2["Hermes gateway<br/>one per extra bot"]
@@ -88,9 +88,9 @@ More detail is in the [architecture guide](docs/ARCHITECTURE.md).
 
 ### How this relates to Hermes Bot Mode
 
-Hermes Desktop has its own Bot Mode. personalBot uses the same Hermes engine but does **not** use Bot Mode: it has its own bot layer on top of the gateway's HTTP API.
+Hermes Desktop has its own Bot Mode. personal-bots uses the same Hermes engine but does **not** use Bot Mode: it has its own bot layer on top of the gateway's HTTP API.
 
-| | personalBot | Hermes Bot Mode |
+| | personal-bots | Hermes Bot Mode |
 |---|---|---|
 | A bot is | A separate Hermes home (the first bot is the default profile) | A Hermes profile |
 | Gateways | One per extra bot | One, serving every profile |
@@ -274,6 +274,6 @@ If a source file has leftover patches of an old background next to the figure, n
 
 ## License and credits
 
-personalBot is a fork of [Bot HQ](https://github.com/nickvasilescu/bot-hq) by Nick Vasilescu and is distributed under the same [MIT license](LICENSE), with the original copyright notice kept. The bot artwork and some icons come from Grok Bot's design and remain the property of their owners, as do third-party app logos; the MIT license does not cover them. See [third-party notices](THIRD_PARTY_NOTICES.md).
+personal-bots is a fork of [Bot HQ](https://github.com/nickvasilescu/bot-hq) by Nick Vasilescu and is distributed under the same [MIT license](LICENSE), with the original copyright notice kept. The bot artwork and some icons come from Grok Bot's design and remain the property of their owners, as do third-party app logos; the MIT license does not cover them. See [third-party notices](THIRD_PARTY_NOTICES.md).
 
 Bot HQ itself continues [grokbot-clone](https://github.com/nickvasilescu/grokbot-clone). Built with [Hermes Agent](https://github.com/NousResearch/hermes-agent), [Orgo](https://orgo.ai), [Composio](https://composio.dev), and [xAI](https://x.ai). This is an independent project, unaffiliated with xAI, Cursor/Anysphere or Nous Research.

@@ -1,5 +1,5 @@
 {
-  "name": "@personalbot/server",
+  "name": "@personal-bots/server",
   "private": true,
   "type": "module",
   "scripts": {

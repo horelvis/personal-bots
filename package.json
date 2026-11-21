@@ -1,7 +1,7 @@
 {
-  "name": "personalbot",
+  "name": "personal-bots",
   "private": true,
-  "description": "personalBot: a team of Hermes agents, each with its own screen on one Orgo computer, with Composio apps and xAI voice.",
+  "description": "personal-bots: a team of Hermes agents, each with its own screen on one Orgo computer, with Composio apps and xAI voice.",
   "workspaces": ["server", "web"],
   "scripts": {
     "dev": "npm run dev -w server & npm run dev -w web",
