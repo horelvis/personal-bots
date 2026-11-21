@@ -33,6 +33,7 @@ export function toBot(r: any): Bot {
     voiceLanguage: r.voice_language ?? 'auto',
     model: r.model ?? null,
     provider: r.provider ?? null,
+    engine: r.engine && r.engine !== 'primary' && r.engine !== 'managed' ? r.engine : 'hermes',
     generation: r.generation,
     unread: r.unread,
     lastPreview: lastPreview ? lastPreview.slice(0, 140) : null,

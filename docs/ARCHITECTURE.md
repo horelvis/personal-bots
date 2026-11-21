@@ -14,7 +14,7 @@ browser ── HTTP + SSE ──► server ── POST /v1/responses ──► H
 | Piece | Where | What it does |
 |---|---|---|
 | API + realtime | `server/src/routes*.ts`, `lib/hub.ts` | JSON over HTTP, plus one Server-Sent Events stream per user (`GET /api/events`) carrying row updates, live state, roster changes and computer state |
-| Turns | `server/src/agent/loop.ts` | Per-Bot serial queue. A turn posts the message to the Bot's Hermes gateway (`/v1/responses`, streaming) and turns the event stream into rows (messages, tool calls) and live state (what the Bot is doing now). Before each turn it makes sure the Bot's screen is ready |
+| Turns | `server/src/agent/loop.ts` | Per-Bot serial queue. A turn posts the message to the Bot's Hermes gateway (`/v1/responses`, streaming) and turns the event stream into rows (messages, tool calls) and live state (what the Bot is doing now). Before each turn it makes sure the Bot's screen is ready. A Bot on a CLI engine gets the same turn from a child process (see CLI engines) |
 | Engines | `server/src/engine.ts` | Which Hermes runs which Bot. The **primary** engine is the gateway that already runs on the computer; the app only calls its API. A **managed** engine is a Hermes home under `ENGINES_DIR/<botId>` with its own `hermes gateway run`, its own port (from 8650), credentials, model and browser helper (`BH_HOME`). Also: model and provider settings, and opening Hermes' subscription sign-in in a terminal on the Bot's screen |
 | App tools | `server/src/mcp.ts`, `agent/tools.ts` | An MCP endpoint per Bot (`POST /mcp/<botId>`, `POST /mcp/primary`; bearer token derived from `SESSION_SECRET`). Tools: `x_search`, `save_file`, routines, tasks, check-ins, `send_to_bot`, group chats, `ask_user`, `request_app_connection`, plus the user's Composio tools |
 | Memory | `server/src/engine-memory.ts` | Memory lives in each Bot's Hermes home (`memories/MEMORY.md`, `USER.md`). The app shows the entries and lets the user remove one |
@@ -53,6 +53,18 @@ Row kinds: `message` (user or assistant, optionally from another Bot or a voice 
 
 The model's own history is Hermes' business; the app keeps only what it shows.
 
+## CLI engines
+
+A Bot can run on a coding-agent CLI instead of Hermes. Claude Code is supported; the user picks the engine when creating the Bot, and only engines whose command is installed on the server are offered. `bots.engine` holds the adapter id (`claude`); `primary` and `managed` are the Hermes kinds.
+
+- **Adapter** (`server/src/agent/cli/`): one file per CLI. It builds the command for a turn and maps the CLI's JSON lines to the loop's events (session, text delta, text, tool call, tool result, error). `run.ts` starts the process and stops it when the turn is interrupted. To add a CLI, write one adapter and list it in `index.ts`.
+- **A turn** is one process: `claude -p --output-format stream-json`. The first turn of a chat starts a session with an id the app chooses; later turns resume it. "New chat" starts a new session. Nothing runs between turns.
+- **Where it runs**: on the server host, in `ENGINES_DIR/<botId>/work`. The CLI is the one installed and signed in there; the app stores no credentials for it. The process gets a minimal environment (no app secrets) and none of the host user's Claude settings, hooks, plugins, memory files or MCP servers. Nothing private is on its command line, which any process on the machine can read: the prompt goes in through stdin, and the persona and the token for the app's tools are files in the Bot's home (mode 600, home 700), outside the work folder. `GIT_CEILING_DIRECTORIES` stops git at the Bot's home, so read-only git commands cannot read the repository the folder may sit in.
+- **Tools**: the app's MCP endpoint is the only MCP server the CLI gets, so routines, tasks, Bot messaging, Gmail, Calendar and connected apps work as for Hermes, with the same approval cards.
+- **Permissions**: the CLI never runs with its permission prompts switched off. Whatever it would ask a person (a shell command that changes something, writing or editing a file, reading outside the Bot's folder) it asks the app through the `permission_prompt` tool, which shows an approval card. "Always allow" is stored per CLI tool (`cli_bash`, `cli_write`, `cli_edit`, `cli_read`), so allowing shell commands once and for all allows every shell command. What the CLI itself treats as safe (reading inside the Bot's folder, read-only commands such as `ls`) and web search and fetch run without a card. A command or path longer than 2000 characters is refused without a card, because the card could not show all of it. If the check fails for any reason, the action is refused.
+- **Persona and memory**: both are sent on every turn. Memory uses the same `memories/MEMORY.md` and `USER.md` files under the Bot's home, written through the `remember` tool, so the memory screen works unchanged.
+- **Not there yet**: a CLI Bot has no screen or browser of its own, and Codex and Pi have no adapter.
+
 ## Approvals
 
 Approvals happen inside the MCP call, so they work the same for every engine:
@@ -61,7 +73,7 @@ Approvals happen inside the MCP call, so they work the same for every engine:
 - Anything else posts an **approval card** and the tool call waits. **Allow** runs it once, **Always allow** stores a per-tool policy, **Don't allow** returns a refusal that tells the agent not to retry.
 - A new user message, or no answer in time, closes the card and the call returns "skipped".
 
-Not covered: what a Bot does through its browser or shell, and Hermes' own prompts for risky commands.
+Not covered for Hermes Bots: what a Bot does through its browser or shell, and Hermes' own prompts for risky commands. A Bot on a CLI engine is covered there too: its shell commands and file writes get the same card (see CLI engines).
 
 ## Bots working together
 

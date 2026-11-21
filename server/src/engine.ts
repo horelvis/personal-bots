@@ -7,7 +7,8 @@ import { displayFor } from './box.js';
 import { cdpUrlFor, screenFor } from './computer.js';
 import { db } from './db.js';
 import { env } from './env.js';
-import type { EngineInfo, EngineProvider } from './types.js';
+import type { EngineChoice, EngineInfo, EngineProvider } from './types.js';
+import { CLI_ADAPTERS, cliAdapter, cliVersion } from './agent/cli/index.js';
 
 /**
  * Every bot is run by a Hermes agent.
@@ -91,6 +92,8 @@ export function assignEngine(botId: string): EngineKind {
   const b = botRow(botId);
   if (!b) throw new Error('bot not found');
   if (b.engine === 'primary' || b.engine === 'managed') return b.engine;
+  // A bot on a CLI engine keeps it; it is never handed a Hermes engine behind the user's back.
+  if (cliAdapter(b.engine)) throw new Error('This bot does not run on Hermes.');
   if (!primaryBotId()) {
     db.prepare("UPDATE bots SET engine='primary', engine_port=NULL WHERE id=?").run(botId);
     return 'primary';
@@ -370,7 +373,64 @@ export async function engineFor(botId: string): Promise<Engine> {
 /** The bot's Hermes home, without starting anything (memory files, sign-in commands). */
 export function engineHome(botId: string): string | null {
   const kind = engineKind(botId);
+  if (!kind && cliAdapter(botRow(botId)?.engine)) return homeFor(botId);
   return kind === 'primary' ? env.hermesHome : kind === 'managed' ? homeFor(botId) : null;
+}
+
+// ---------- a bot on a CLI engine ----------
+
+/** Engines a new bot can run on. A CLI engine is offered only while its command is installed here. */
+export function availableEngines(): EngineChoice[] {
+  return [
+    { id: 'hermes', name: 'Hermes', available: true, version: null },
+    ...CLI_ADAPTERS.map((a) => {
+      const version = cliVersion(a);
+      return { id: a.id, name: a.name, available: version !== null, version };
+    }),
+  ];
+}
+
+/**
+ * The bot's home under ENGINES_DIR: `work` is the folder the CLI runs in, `memories` holds the same
+ * files a Hermes home has (see engine-memory.ts). Created on first use.
+ */
+export function cliHome(botId: string): { home: string; work: string } {
+  const home = homeFor(botId);
+  const work = path.join(home, 'work');
+  fs.mkdirSync(work, { recursive: true });
+  fs.mkdirSync(path.join(home, 'memories'), { recursive: true });
+  // Like a Hermes home: nobody else on the machine reads it (it holds the bot's token for the app's tools).
+  fs.chmodSync(home, 0o700);
+  return { home, work };
+}
+
+/** Put a new bot on a CLI engine. Throws when that engine is unknown or its command is not installed. */
+export function useCliEngine(botId: string, engine: string) {
+  const adapter = cliAdapter(engine);
+  if (!adapter) throw new Error(`Unknown engine "${engine}".`);
+  if (cliVersion(adapter) === null) throw new Error(`${adapter.name} is not installed on this machine.`);
+  db.prepare('UPDATE bots SET engine=?, engine_port=NULL, engine_session=NULL WHERE id=?').run(adapter.id, botId);
+  cliHome(botId);
+}
+
+/**
+ * The CLI-side conversation for the bot's current chat. "New chat" bumps the generation, and a new
+ * generation gets a new session. `resume` is false until the CLI has confirmed the session exists.
+ */
+export function cliSession(botId: string): { id: string; resume: boolean } {
+  const b = botRow(botId);
+  const [gen, id] = String(b?.engine_session ?? '').split(':');
+  if (id && gen === String(b.generation)) return { id, resume: true };
+  return { id: crypto.randomUUID(), resume: false };
+}
+
+export function saveCliSession(botId: string, generation: number, id: string) {
+  db.prepare('UPDATE bots SET engine_session=? WHERE id=?').run(`${generation}:${id}`, botId);
+}
+
+/** The CLI no longer has the session (its files were removed): the next turn starts a fresh one. */
+export function forgetCliSession(botId: string) {
+  db.prepare('UPDATE bots SET engine_session=NULL WHERE id=?').run(botId);
 }
 
 /**
@@ -499,7 +559,13 @@ export async function engineInfo(botId: string): Promise<EngineInfo> {
   const b = botRow(botId);
   if (!b) throw new Error('bot not found');
   const kind = engineKind(botId);
-  const base: EngineInfo = { botId, profile: kind === 'primary' ? 'default' : botId, status: 'stopped', error: null, model: b.model ?? null, provider: b.provider ?? null, version: null, providers: [], ownScreen: kind ? ownScreenOn(botId) : false };
+  const base: EngineInfo = { botId, engine: 'hermes', engineName: 'Hermes', profile: kind === 'primary' ? 'default' : botId, status: 'stopped', error: null, model: b.model ?? null, provider: b.provider ?? null, version: null, providers: [], ownScreen: kind ? ownScreenOn(botId) : false };
+  const cli = cliAdapter(b.engine);
+  if (cli) {
+    // Nothing runs between turns: the engine is ready whenever its command is installed.
+    const version = cliVersion(cli);
+    return { ...base, engine: cli.id, engineName: cli.name, profile: cli.id, provider: null, version, status: version ? 'ready' : 'error', error: version ? null : `${cli.name} is not installed on this machine.` };
+  }
   if (!kind) return { ...base, status: 'error', error: 'This bot has no agent.' };
 
   let e: { url: string; key: string };

@@ -4,8 +4,12 @@ import { getBotRow } from './store.js';
 import { connectedServices } from './oauth/connections.js';
 import { composioTools } from './composio.js';
 import { mcpToken, primaryBotId } from './engine.js';
-import { claimToolRow, enqueueBotMessage, markSilent, noteToolOutcome, requestApproval, turnDepth } from './agent/loop.js';
+import { claimToolRow, enqueueBotMessage, markSilent, noteToolOutcome, requestApproval, toolRowByCallId, turnDepth } from './agent/loop.js';
 import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agent/tools.js';
+import { cliAdapter } from './agent/cli/index.js';
+import { CLI_TOOL_DEFS, MEMORY_TOOL, PERMISSION_TOOL, permissionAnswer, permissionRule, permissionStep } from './agent/cli/tools.js';
+import { addMemory } from './engine-memory.js';
+import { db } from './db.js';
 
 /**
  * The app's tools, served to the Hermes engines over MCP (streamable HTTP, JSON answers only).
@@ -17,6 +21,9 @@ import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agen
  * Every call is stateless: the URL says which bot is calling. Besides the app's own tools the list
  * carries the user's Composio tools, so connected apps (and the approvals around them) work the
  * same for every engine.
+ *
+ * A bot on a CLI engine (Claude Code) gets two more tools: the one its CLI asks for permission
+ * through, which turns the CLI's own prompts into approval cards, and one to save memory notes.
  */
 
 const DECLINED = 'The user declined this action. Do not retry it. Find another way, or tell the user what you could not do.';
@@ -45,16 +52,54 @@ async function listTools(botId: string | null) {
   const own = TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters }));
   const bot = botId ? getBotRow(botId) : null;
   if (!bot) return own;
+  if (cliAdapter(bot.engine)) own.push(...CLI_TOOL_DEFS);
   const apps = (await composioTools(bot.user_id))
     .filter((t: any) => t?.type === 'function' && typeof t.name === 'string' && !toolMap.has(t.name))
     .map((t: any) => ({ name: t.name as string, description: String(t.description ?? ''), inputSchema: t.parameters ?? { type: 'object', properties: {} } }));
   return [...own, ...apps];
 }
 
+/**
+ * A CLI engine asks whether one of its built-in tool calls (a shell command, a file write, a read
+ * outside the bot's folder) may go ahead. The user's saved choice decides; without one they get the
+ * same approval card as for a connected app. Anything that goes wrong is a refusal, never a pass.
+ */
+async function answerPermission(userId: string, botId: string, args: any): Promise<CallResult> {
+  const input = args?.input;
+  try {
+    const tool = typeof args?.tool_name === 'string' ? args.tool_name : '';
+    const rule = permissionRule(tool, input);
+    const mode = (db.prepare('SELECT mode FROM policies WHERE user_id=? AND tool=?').get(userId, rule.key) as any)?.mode as string | undefined;
+    const step = permissionStep(tool, mode);
+    if (step === 'allow') return text(permissionAnswer('allow', input));
+    const rowSeq = await toolRowByCallId(botId, typeof args?.tool_use_id === 'string' ? args.tool_use_id : '');
+    if (step === 'deny') {
+      noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Not allowed' });
+      return text(permissionAnswer('deny', input, DECLINED));
+    }
+    if (rule.tooLong) {
+      // The user would approve something they cannot read in full.
+      noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Too long to show for approval' });
+      return text(permissionAnswer('deny', input, 'This is too long to show the user for approval, so it was not run. Do it in shorter steps (for a long script, write it to a file first, then run the file).'));
+    }
+    const answer = await requestApproval({ userId, botId }, rule, input ?? {}, rowSeq);
+    if (answer === 'allow') return text(permissionAnswer('allow', input));
+    return text(permissionAnswer('deny', input, answer === 'deny' ? DECLINED : SKIPPED));
+  } catch (e: any) {
+    console.error('[mcp] permission check failed', botId, e?.message ?? e);
+    return text(permissionAnswer('deny', input, 'The app could not check this action, so it was not allowed.'));
+  }
+}
+
 async function callTool(botId: string | null, rawName: string, args: any): Promise<CallResult> {
   const bot = botId ? getBotRow(botId) : null;
   if (!botId || !bot) return text('The team app has no bot for this agent yet. Ask the user to open the app once, then try again.', true);
   const userId: string = bot.user_id;
+  if (rawName === PERMISSION_TOOL) {
+    // Only a CLI engine has prompts to answer; for any other caller this tool does not exist.
+    if (!cliAdapter(bot.engine)) return text(permissionAnswer('deny', args?.input, 'Not allowed.'), true);
+    return answerPermission(userId, botId, args);
+  }
   const name = [...toolMap.keys()].find((k) => k.toLowerCase() === rawName.toLowerCase()) ?? rawName;
   const rowSeq = await claimToolRow(botId, name);
   const ctx: ToolCtx = { userId, botId, enqueueBotMessage, depth: turnDepth(botId) };
@@ -76,6 +121,13 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
         const answer = await requestApproval({ userId, botId }, { ...pol, detail }, args, rowSeq);
         if (answer !== 'allow') return text(answer === 'deny' ? DECLINED : SKIPPED);
       }
+    }
+    if (name === MEMORY_TOOL && cliAdapter(bot.engine)) {
+      const about = args?.about === 'user' ? 'u' : args?.about === 'self' ? 'm' : null;
+      if (!about || typeof args?.text !== 'string' || !args.text.trim()) return text('Give about ("user" or "self") and the text to remember.', true);
+      const added = addMemory(botId, about, args.text);
+      noteToolOutcome(botId, rowSeq, { status: 'done', summary: added ? 'Saved' : 'Already known' });
+      return text(added ? 'Saved to your memory.' : 'That was already in your memory.');
     }
     if (own) {
       const r = await own.impl(args, ctx);
