@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import type { AvatarColor, AvatarShape, Bot } from '@shared/types';
+import { useCallback, useEffect, useState } from 'react';
+import type { AvatarColor, AvatarShape, Bot, EngineChoice } from '@shared/types';
 import { BotAvatar, PICKER_CHARACTERS, PICKER_SHAPES } from '../../avatar/BotAvatar';
 import { api } from '../../lib/api';
 import { COLOR_ORDER, palette } from '../../lib/colors';
@@ -9,6 +9,11 @@ import { Modal } from './Modal';
 
 const ROWS = [PICKER_CHARACTERS.slice(0, 5), PICKER_CHARACTERS.slice(5), PICKER_SHAPES.slice(0, 5), PICKER_SHAPES.slice(5, 10), PICKER_SHAPES.slice(10)];
 const COLOR_ROWS = [COLOR_ORDER.slice(0, 6), COLOR_ORDER.slice(6)];
+/** One line on what choosing an engine means for the bot. */
+const ENGINE_SUB: Record<string, string> = {
+  hermes: 'Its own screen and browser',
+  claude: 'Works in a folder; asks before it changes things',
+};
 
 export function CreateBotModal() {
   const setModal = useStore((s) => s.setModal);
@@ -16,16 +21,25 @@ export function CreateBotModal() {
   const [shape, setShape] = useState<AvatarShape>('bot-casual');
   const [color, setColor] = useState<AvatarColor>('orange');
   const [mode, setMode] = useState<Bot['mode']>('personal');
+  const [engines, setEngines] = useState<EngineChoice[]>([]);
+  const [engine, setEngine] = useState('hermes');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const close = useCallback(() => setModal(null), [setModal]);
   const canCreate = name.trim().length > 0 && !busy;
 
+  // Only engines installed on the server can be picked; with Hermes alone there is nothing to choose.
+  useEffect(() => {
+    let alive = true;
+    api.engines().then((r) => { if (alive) setEngines((r.engines ?? []).filter((e) => e.available)); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   const create = async () => {
     if (!canCreate) return;
     setBusy(true); setError(null);
     try {
-      const { bot } = await api.createBot({ name: name.trim(), avatarShape: shape, avatarColor: color, mode });
+      const { bot } = await api.createBot({ name: name.trim(), avatarShape: shape, avatarColor: color, mode, ...(engine !== 'hermes' ? { engine } : {}) });
       const st = useStore.getState();
       st.set({ bots: st.bots.some((b) => b.id === bot.id) ? st.bots : [...st.bots, bot] });
       st.selectBot(bot.id);
@@ -86,6 +100,16 @@ export function CreateBotModal() {
               <span className="mode-pick__sub">Works with your whole team</span>
             </button>
           </div>
+          {engines.length > 1 && (
+            <div className="mode-pick" role="radiogroup" aria-label="Engine">
+              {engines.map((e) => (
+                <button key={e.id} type="button" role="radio" aria-checked={engine === e.id} className={`mode-pick__opt${engine === e.id ? ' is-active' : ''}`} onClick={() => setEngine(e.id)}>
+                  <span className="mode-pick__title">{e.name}</span>
+                  <span className="mode-pick__sub">{ENGINE_SUB[e.id] ?? 'Runs on this engine'}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {error && <div className="card__error">{error}</div>}
         </div>
         <div className="modal__footer">

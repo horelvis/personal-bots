@@ -7,7 +7,7 @@ import { displayFor } from './box.js';
 import { cdpUrlFor, screenFor } from './computer.js';
 import { db } from './db.js';
 import { env } from './env.js';
-import type { EngineInfo, EngineProvider } from './types.js';
+import type { EngineChoice, EngineInfo, EngineProvider } from './types.js';
 import { CLI_ADAPTERS, cliAdapter, cliVersion } from './agent/cli/index.js';
 
 /**
@@ -380,7 +380,7 @@ export function engineHome(botId: string): string | null {
 // ---------- a bot on a CLI engine ----------
 
 /** Engines a new bot can run on. A CLI engine is offered only while its command is installed here. */
-export function availableEngines(): { id: string; name: string; available: boolean; version: string | null }[] {
+export function availableEngines(): EngineChoice[] {
   return [
     { id: 'hermes', name: 'Hermes', available: true, version: null },
     ...CLI_ADAPTERS.map((a) => {

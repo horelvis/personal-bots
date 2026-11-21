@@ -192,6 +192,15 @@ export interface ComputerState {
   maxScreens?: number;
 }
 
+/** An engine a new bot can run on. */
+export interface EngineChoice {
+  /** 'hermes', or the id of a CLI engine such as 'claude'. */
+  id: string;
+  name: string;
+  available: boolean;
+  version: string | null;
+}
+
 /** A model provider Hermes can use (subscription sign-in or API key). */
 export interface EngineProvider {
   id: string;
