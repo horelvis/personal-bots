@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { CliAdapter, CliEvent } from './adapter.js';
 
 /**
@@ -26,6 +27,14 @@ export const claude: CliAdapter = {
   bin: process.env.CLAUDE_BIN || 'claude',
 
   command(o) {
+    // The token for the app's tools and the persona (the user's email, the bot's memory) stay out of
+    // the command line; so does the prompt, which the CLI reads from stdin.
+    const mcpFile = path.join(o.home, 'mcp.json');
+    const systemFile = path.join(o.home, 'system.md');
+    const files = [
+      { path: mcpFile, content: JSON.stringify({ mcpServers: { hq: { type: 'http', url: o.mcp.url, headers: { Authorization: `Bearer ${o.mcp.token}` } } } }) },
+      { path: systemFile, content: o.system },
+    ];
     const args = [
       '-p',
       '--output-format', 'stream-json',
@@ -34,19 +43,18 @@ export const claude: CliAdapter = {
       // Nothing of the host user's own setup reaches a bot: no settings, hooks, plugins or memory files, and no MCP servers but ours.
       '--setting-sources', '',
       '--strict-mcp-config',
-      '--mcp-config', JSON.stringify({ mcpServers: { hq: { type: 'http', url: o.mcp.url, headers: { Authorization: `Bearer ${o.mcp.token}` } } } }),
+      '--mcp-config', mcpFile,
       // Whatever the CLI would ask a person, it asks the app, which shows an approval card.
       '--permission-prompt-tool', `mcp__hq__${o.permissionTool}`,
       '--tools', TOOLS.join(','),
       // The app's tools carry their own approvals; reading the web needs none.
       '--allowedTools', ['mcp__hq', 'WebSearch', 'WebFetch'].join(','),
-      '--append-system-prompt', o.system,
+      '--append-system-prompt-file', systemFile,
       ...(o.resume ? ['--resume', o.sessionId] : ['--session-id', o.sessionId]),
       ...(o.model ? ['--model', o.model] : []),
       ...(o.effort ? ['--effort', o.effort] : []),
-      '--', o.prompt,
     ];
-    return { args };
+    return { args, files, stdin: o.prompt };
   },
 
   environment(from) {

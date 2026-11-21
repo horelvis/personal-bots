@@ -399,6 +399,8 @@ export function cliHome(botId: string): { home: string; work: string } {
   const work = path.join(home, 'work');
   fs.mkdirSync(work, { recursive: true });
   fs.mkdirSync(path.join(home, 'memories'), { recursive: true });
+  // Like a Hermes home: nobody else on the machine reads it (it holds the bot's token for the app's tools).
+  fs.chmodSync(home, 0o700);
   return { home, work };
 }
 

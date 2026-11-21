@@ -7,6 +7,8 @@
  */
 
 export interface TurnOptions {
+  /** The bot's private folder, beside its work folder: files only this bot's engine may read go here. */
+  home: string;
   /** The bot's own folder; the CLI works there. */
   cwd: string;
   prompt: string;
@@ -41,7 +43,12 @@ export interface CliAdapter {
   name: string;
   /** The executable to run. */
   bin: string;
-  command(o: TurnOptions): { args: string[] };
+  /**
+   * The command for one turn. Its arguments must hold nothing private: any process on the machine
+   * can read a command line. The prompt goes to the CLI's stdin, and `files` (persona, credentials)
+   * are written for the owner only before the CLI starts.
+   */
+  command(o: TurnOptions): { args: string[]; files: { path: string; content: string }[]; stdin: string };
   /** What the child process may see of the server's environment. */
   environment(from: Record<string, string | undefined>): Record<string, string>;
   /** One parsed JSON line of the CLI's output. */

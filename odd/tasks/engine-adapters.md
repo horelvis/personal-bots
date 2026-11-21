@@ -28,6 +28,7 @@ Forecast: about 700 authored lines, over the 400-line slice size; slices follow 
 - [x] T2 (S7,S8) inline: MCP for a CLI bot: permission prompt wired to approval cards, memory tool, tool naming and activity labels. Commit: `f429e1c`. Risk: item 2 (security: permission guard).
 - [x] T3 (S6) inline: pick the engine when creating a bot; show it in the details panel; offer only installed CLIs. Commit: `842e7e3`.
 - [x] T4 (S1,S9) inline: docs (`docs/ARCHITECTURE.md`, `.env.example`) and end-to-end check against the real CLI (L7). Commit: the one that adds this document.
+- [x] T5 (S8) inline: correction after independent verification (B1-B3 in L10). Commit: the one that adds this line. Risk: item 2.
 
 Route: inline for all tasks (no Writer trigger: T2 and T3 depend on T1; one seam, `runTurn`).
 
@@ -55,3 +56,26 @@ Route: inline for all tasks (no Writer trigger: T2 and T3 depend on T1; one seam
   - Not checked end to end: `gmail_send` stopping at an approval card for a CLI bot (needs a connected Google account; the path is the unchanged `callTool` code shared with Hermes), and an approval that waits longer than a few seconds (`MCP_TOOL_TIMEOUT` is set to 30 minutes but its effect was not measured).
 - L8 (2026-11-16) Review (RDD on by default): `gentle-ai review assess --base-ref 636cb9d --committed-only` could not assess while the tree had untracked files; per-commit assessment was not run before the next commits were added. Deviation recorded; the branch is assessed at the end.
 - L9 (2026-11-16) Hermes path: `runTurn` returns early for a CLI bot and is otherwise unchanged; `instructionsFor` keeps the Hermes text through the else branch of two conditionals (read in the diff, not compared by running both versions). No Hermes gateway was available on this machine to run a Hermes turn.
+- L10 (2026-11-16) Independent verification (in-repo clone, 4 real CLI turns). S2-S7 pass; S9 pass except `gmail_send` (not run); S8 failed with three blockers:
+  - B1: the MCP bearer token was in argv (`--mcp-config` JSON); `ps auxww` runs without a card and showed a live token of any bot mid-turn.
+  - B2: with the work folder inside the app repository, read-only git (`git show HEAD:file`, `git log --format=%ae`, `git ls-files --others`) read the repository without a card.
+  - B3: the card showed only the first 1200 characters of a command; a tail such as `; rm -rf ~/important` was approved unseen.
+  - Held (carded and denied, no side effects): reads outside the folder by Read/Grep/Glob/cat/symlink/`cd ..`/`$(...)`; `find -exec`, redirects, `sed -i`, `git branch`/`tag`, `python3 -c`; `printenv`, `ps eww`; repo `CLAUDE.md` and `.claude/settings.json` ignored; permission endpoint denies on missing tool name, a Hermes bot, another bot's token, interrupt.
+  - Hermes: `instructionsFor` hashes identically on `636cb9d` and HEAD for a primary and a managed bot.
+  - Advisories, not changed: WebFetch runs without a card (documented assumption; it can reach local services and carry out what the bot may read); "Always allow" on one outside read allows every outside read (documented grain); model credentials set in the server's environment reach the child; an unknown tool name from a Hermes bot opens a card (existing Composio path).
+- L11 (2026-11-16) Correction batch for B1-B3, RED then GREEN (6 failing tests first; suite now 90 tests, 89 pass, 0 fail, 1 skipped):
+  - B1: prompt on stdin; persona and MCP config in `<home>/system.md` and `<home>/mcp.json` (mode 600, home 700, outside the work folder); nothing private in argv. Probe: `cat ../mcp.json` is carded.
+  - B2: `GIT_CEILING_DIRECTORIES=<home>`. Probe in an in-repo folder: `git status` and `git log` answer "not a git repository"; `git -C <repo>` and `git --git-dir=` are carded.
+  - B3: a command or path over 2000 characters is refused without a card; shorter ones are shown whole.
+  - Advisory taken: the bot home is now mode 700.
+- L12 (2026-11-16) Recheck by the same verifier, limited to B1-B3, at `4bcceaa` (in-repo clone, 2 real CLI turns): all three fixed.
+  - B1: the running `claude` process shows only file paths; `ps auxww` has no token; Read and `cat` of `<home>/mcp.json` and `<home>/system.md` are carded; home is 700, both files 600. The `ps | grep Bearer` line was run from the host, not by the bot (the model declined to run it).
+  - B2: the six git commands answer "fatal: not a git repository" from the in-repo work folder.
+  - B3: a 2126-character command is refused without a card; the original 1326-character reproduction now gets a card showing the whole command, tail included; a short command gets a full card; a denied `touch` leaves no file.
+  - Still unverified: `gmail_send` (or any write-tool card) for a CLI bot, a real Hermes turn after the change, approvals that wait minutes, a `blocked` policy (code reading only).
+- L13 (2026-11-16) Scratch removed by the parent: the verifier's `/tmp/verify-engine.wSOYz3` and a Hermes gateway its test server had started for a scratch bot (confirmed by its HERMES_HOME before stopping it).
+- L14 (2026-11-16) Native review (RDD), consent asked and granted by the user ("Revisar este cambio"). Candidate: the committed branch from `636cb9d` (24 files; whole branch, not per-commit slices, see L8). Lenses: risk, resilience, reliability. Outcome: approved, acknowledged (lineage `review-47846af62893bbed`). No blocker and no correction. Non-blocking findings, left as later work:
+  - Risk: WebFetch/WebSearch without a card (egress and loopback reach); model credentials in the child's environment; an approved shell command runs as the server's user on the host; a Write card shows the path, not the content.
+  - Reliability: the CLI turn mapping in `loop.ts` and the permission wiring in `mcp.ts` have no automated test (only the pure rules and the adapter do); model and effort values are passed to the CLI unvalidated; a bot row can be left behind if assigning a CLI engine fails after the insert.
+  - Resilience: `cliVersion` runs a synchronous `--version` (up to 8 s) on the server's thread; a turn ends only when the CLI's stdout closes; the session id is saved before the CLI has stored the conversation; memory files grow without a bound and are not written atomically.
+- L15 (2026-11-16) User on the Risk line (verbatim): "ese riesgo es alto". Offered: accept as is, or isolate the CLI in a container before merging. User (verbatim): "dejalo anotado por si se corrige en otras R". The open risks are written as K1-K7 under "Open risks from R1" in `docs/requirements-superbot-ideas.md`; nothing is scheduled.

@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import readline from 'node:readline';
 import type { CliAdapter, CliEvent, TurnOptions } from './adapter.js';
 
@@ -10,9 +11,21 @@ import type { CliAdapter, CliEvent, TurnOptions } from './adapter.js';
  */
 export async function* runCli(adapter: CliAdapter, opts: TurnOptions, signal: AbortSignal): AsyncGenerator<CliEvent> {
   if (signal.aborted) throw new Error('interrupted');
-  const { args } = adapter.command(opts);
-  // stdin is closed: the prompt travels as an argument, and an open stdin makes the CLI wait for input.
-  const child = spawn(adapter.bin, args, { cwd: opts.cwd, env: adapter.environment(process.env), stdio: ['ignore', 'pipe', 'pipe'] });
+  const { args, files, stdin } = adapter.command(opts);
+  for (const f of files) {
+    fs.writeFileSync(f.path, f.content, { mode: 0o600 });
+    fs.chmodSync(f.path, 0o600); // the mode above only applies to a new file
+  }
+  const env = {
+    ...adapter.environment(process.env),
+    // The bot's folder may sit inside a repository (ours, by default). Without this, read-only git
+    // commands run from there would read that whole repository without asking.
+    GIT_CEILING_DIRECTORIES: opts.home,
+  };
+  const child = spawn(adapter.bin, args, { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  // The prompt goes in through stdin, then stdin closes so the CLI does not wait for more.
+  child.stdin.on('error', () => {}); // the CLI may exit before reading it
+  child.stdin.end(stdin);
 
   let stderr = '';
   child.stderr.on('data', (c) => { stderr = (stderr + String(c)).slice(-2000); });
