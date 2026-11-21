@@ -10,7 +10,7 @@ import { allLive, appendRow, clearConversation, emitBot, getBot, getBotRow, getR
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
 import { computerState, ensureComputer, forgetBotFiles, hasComputer, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
 import { dockerBox } from './dockerbox.js';
-import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
+import { assignEngine, availableEngines, provisionEngine, removeEngine, syncPersona, useCliEngine } from './engine.js';
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { orgo } from './orgo.js';
 import { catalog, composioEnabled, composioReason, ComposioUnavailable, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
@@ -42,9 +42,12 @@ class UserError extends Error {}
 
 const agentCount = () => (db.prepare("SELECT COUNT(*) n FROM bots WHERE COALESCE(kind,'agent')<>'room' AND COALESCE(hidden,0)=0").get() as any).n as number;
 
-function createBot(userId: string, b: { name: string; label?: string; description?: string; instructions?: string; avatarShape?: string; avatarColor?: string; mode?: string; isPrimary?: boolean }) {
+function createBot(userId: string, b: { name: string; label?: string; description?: string; instructions?: string; avatarShape?: string; avatarColor?: string; mode?: string; isPrimary?: boolean; engine?: string }) {
   // Every bot needs a screen of its own on the one shared computer.
   if (agentCount() >= env.maxBots) throw new UserError(`The team is full: the computer has room for ${env.maxBots} bots. Remove one to add another.`);
+  // Hermes unless the user picked another engine; one that is not installed here cannot be picked.
+  const wanted = typeof b.engine === 'string' && b.engine !== 'hermes' ? b.engine : null;
+  if (wanted && !availableEngines().some((e) => e.id === wanted && e.available)) throw new UserError('That engine is not installed on this machine.');
   const id = newId('bot');
   // A bot that did not choose how it looks gets one of the characters.
   const shape = SHAPES.includes(b.avatarShape as AvatarShape) ? b.avatarShape : hashPick(id, CHARACTER_IDS);
@@ -52,8 +55,9 @@ function createBot(userId: string, b: { name: string; label?: string; descriptio
   db.prepare(
     'INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,mode,is_primary,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
   ).run(id, userId, b.name.trim().slice(0, 60) || 'New Bot', b.label ?? '', b.description ?? '', b.instructions ?? '', shape, color, b.mode === 'teammate' ? 'teammate' : 'personal', b.isPrimary ? 1 : 0, now(), now());
-  // The first bot is the agent that already runs on the computer; the others get an engine of their own.
-  if (assignEngine(id) === 'managed') provisionEngine(id);
+  if (wanted) useCliEngine(id, wanted);
+  // On Hermes, the first bot is the agent that already runs on the computer; the others get an engine of their own.
+  else if (assignEngine(id) === 'managed') provisionEngine(id);
   hub.emit(userId, { type: 'roster' });
   return getBot(id)!;
 }
@@ -283,6 +287,9 @@ const ownBot = (userId: string, id: string) => {
 };
 
 api.get('/bots', (c) => c.json({ bots: listBots(c.get('user').id), live: allLive(c.get('user').id) }));
+
+/** What a new bot can run on: Hermes, and each CLI engine with whether it is installed here. */
+api.get('/engines', (c) => c.json({ engines: availableEngines() }));
 
 api.post('/bots', async (c) => {
   const body = await c.req.json();

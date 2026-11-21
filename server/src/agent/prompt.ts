@@ -4,6 +4,9 @@ import { composioEnabled, connectedToolkits } from '../composio.js';
 import { appsGuidance } from './apps-guidance.js';
 import { ownServices } from './own-services.js';
 import { LIBRARY_ROOT } from './tools.js';
+import { cliAdapter } from './cli/index.js';
+import { MEMORY_TOOL } from './cli/tools.js';
+import { listMemories } from '../engine-memory.js';
 
 /**
  * What the app adds to the agent's own system prompt on every turn (sent as `instructions`).
@@ -12,12 +15,16 @@ import { LIBRARY_ROOT } from './tools.js';
  * is and how the app's own tools fit in. It must stay byte-identical between turns unless something
  * really changed (a routine, a connected app), because it sits in the cached part of the prompt:
  * nothing here may depend on the clock.
+ *
+ * A bot on a CLI engine has no persona or memory of its own on the engine's side, so both come from
+ * here: its memory files are included, and it works in a folder instead of on a screen.
  */
 export async function instructionsFor(userId: string, botId: string): Promise<string> {
   const bot = getBotRow(botId);
   const user = db.prepare('SELECT * FROM users WHERE id=?').get(userId) as any;
   const owner = user?.name ?? 'the user';
   const primaryEngine = bot.engine === 'primary';
+  const cli = cliAdapter(bot.engine);
 
   const team = (db.prepare("SELECT name, label, is_primary FROM bots WHERE user_id=? AND id<>? AND COALESCE(hidden,0)=0 AND COALESCE(kind,'agent')<>'room' ORDER BY created_at").all(userId, botId) as any[])
     .map((b) => `- ${b.name}${b.label ? ` (${b.label})` : ''}${b.is_primary ? ' [main point of contact]' : ''}`)
@@ -43,15 +50,15 @@ The app gives you extra tools through its MCP server "hq"; their names carry tha
 ${appsGuidance({ owner, services, composio: composioEnabled })}
 - Some actions (sending an email, changing a calendar event, writing in a connected app) wait for ${owner} to approve them. The tool call simply takes longer and then returns. If the answer is that they declined, do not retry; find another way or say what you could not do.
 - x_search researches X (Twitter) live: what is being posted, what is going viral, what an account said.
-- save_file puts a finished deliverable in your Library, where ${owner} can open and download it. Anything you write under ${LIBRARY_ROOT}/${botId}/ shows up there too.
+- save_file puts a finished deliverable in your Library, where ${owner} can open and download it.${cli ? '' : ` Anything you write under ${LIBRARY_ROOT}/${botId}/ shows up there too.`}
 - ask_user asks a multiple-choice question when you need a real decision. After calling it, stop; the answer arrives as the next message.
 - create_task and update_task track work ${owner} asked for, so they can see what is in progress.
 - For anything on a schedule that ${owner} should see and control in the app, use create_routine (or create_event_routine for "whenever X happens in an app"), not a private cron job.
 - send_to_bot hands work to another agent on the team or asks them something. Their reply comes back to you as a message. post_to_group posts into a group chat you belong to.
 - stay_silent ends a turn without telling ${owner} anything. Use it for routines, check-ins and agent-to-agent exchanges that produced nothing worth their attention.
 
-## Your computer
-You have your own screen on a Linux computer shared by the team: a desktop with your own browser. ${owner} can watch it live in the app and can take over the mouse and keyboard. Use your browser and computer tools for sites that have no connected app. Stay on your own screen.
+${cli ? cliSections(botId, owner, cli.name) : `## Your computer
+You have your own screen on a Linux computer shared by the team: a desktop with your own browser. ${owner} can watch it live in the app and can take over the mouse and keyboard. Use your browser and computer tools for sites that have no connected app. Stay on your own screen.`}
 
 ## Style
 - Write like a sharp colleague texting: short, warm, direct. No headings for simple replies. Lists or tables only when they help.
@@ -63,4 +70,19 @@ You have your own screen on a Linux computer shared by the team: a desktop with 
 - Connected apps: ${apps || 'none yet'}
 ${team ? `- Other agents on the team:\n${team}` : '- You are the only agent on the team so far.'}${groups ? `\n- Group chats you are in: ${groups}` : ''}
 ${routines ? `\n## Your routines in the app\n${routines}\n` : ''}${skills ? `\n## Skills ${owner} gave you\n${skills}\n` : ''}${bot.instructions ? `\n## Instructions from ${owner}\n${bot.instructions}\n` : ''}`;
+}
+
+/** What only a bot on a CLI engine is told: where it works, what needs approval, and what it remembers. */
+function cliSections(botId: string, owner: string, engineName: string): string {
+  const memories = listMemories(botId);
+  const about = (source: string) => memories.filter((m) => m.source === source).map((m) => `- ${m.text.replace(/\n+/g, ' ')}`).join('\n');
+  const mine = about('learned');
+  const user = about('chat');
+  return `## Your workspace
+You run on ${engineName}, in a folder of your own on ${owner}'s machine. You can read and search files there and on the web freely. Running a shell command that changes something, writing or editing a file, or reading outside your folder waits for ${owner} to approve it in the app, like the actions above. Keep your work inside your folder. You have no screen or browser of your own.
+
+## Your memory
+You do not remember earlier conversations by yourself. What you saved before is below; save a new lasting fact with the ${MEMORY_TOOL} tool (about "user" for ${owner}'s facts and preferences, about "self" for your job, rules and lessons).
+${user ? `What you know about ${owner}:\n${user}` : `You have saved nothing about ${owner} yet.`}
+${mine ? `Your own notes:\n${mine}` : 'You have no notes of your own yet.'}`;
 }

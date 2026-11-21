@@ -39,6 +39,25 @@ export function listMemories(botId: string): Memory[] {
   return out;
 }
 
+/**
+ * Add one entry to a bot's memory file ('m' = its own notes, 'u' = what it knows about the user).
+ * Used for bots on a CLI engine, whose agent has no memory tool of its own. Returns false when the
+ * bot has no home or the entry is empty or already there.
+ */
+export function addMemory(botId: string, key: 'm' | 'u', text: string): boolean {
+  const home = engineHome(botId);
+  const f = FILES.find((x) => x.key === key);
+  // The separator line is ours: an entry cannot contain one.
+  const entry = text.split('\n').filter((l) => l.trim() !== '§').join('\n').trim().slice(0, 2000);
+  if (!home || !f || !entry) return false;
+  const file = path.join(home, 'memories', f.file);
+  const { entries } = read(file);
+  if (entries.includes(entry)) return false;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, [...entries, entry].join(SEP) + '\n');
+  return true;
+}
+
 /** The bot a memory id belongs to, so the caller can check who owns it. */
 export function memoryBot(id: string): string | null {
   const parts = id.split('.');

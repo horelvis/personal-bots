@@ -34,6 +34,8 @@ export interface Bot {
   /** Hermes engine: model id and provider for this bot; null = the engine's default. */
   model: string | null;
   provider: string | null;
+  /** What runs this bot: 'hermes', or the id of a CLI engine such as 'claude'. */
+  engine: string;
   generation: number;
   unread: number;
   lastPreview: string | null;
@@ -203,6 +205,10 @@ export interface EngineProvider {
 /** The Hermes agent that runs one bot. */
 export interface EngineInfo {
   botId: string;
+  /** 'hermes', or the id of a CLI engine such as 'claude'. */
+  engine: string;
+  /** The engine's name as shown to the user. */
+  engineName: string;
   /** Hermes profile name ('default' for the primary bot). */
   profile: string;
   status: 'ready' | 'starting' | 'stopped' | 'error';
