@@ -65,6 +65,10 @@ A Bot can run on a coding-agent CLI instead of Hermes. Claude Code is supported;
 - **Persona and memory**: both are sent on every turn. Memory uses the same `memories/MEMORY.md` and `USER.md` files under the Bot's home, written through the `remember` tool, so the memory screen works unchanged.
 - **Not there yet**: a CLI Bot has no screen or browser of its own, and Codex and Pi have no adapter.
 
+## Outside content is data
+
+Results of the app's tools that carry content someone else wrote (Gmail searches and reads, Calendar events, X posts, every Composio app's answer, another Bot's reply to `ask_bot`) reach the Bot inside an `<untrusted_tool_result source="...">` block that says it is data, not instructions (`server/src/lib/untrusted.ts`). Text inside cannot close the block early. A tool marks its result with `untrusted` (the source's name); the app's own messages ("Saved", errors, "Not allowed") stay plain. The Bots' instructions say that only the user, outside such blocks, tells them what to do. Not covered: the CLI's own web and file tools, whose results the app never sees.
+
 ## Approvals
 
 Approvals happen inside the MCP call, so they work the same for every engine:

@@ -9,6 +9,7 @@ import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agen
 import { cliAdapter } from './agent/cli/index.js';
 import { CLI_TOOL_DEFS, MEMORY_TOOL, PERMISSION_TOOL, permissionAnswer, permissionRule, permissionStep } from './agent/cli/tools.js';
 import { addMemory } from './engine-memory.js';
+import { toolOutput } from './lib/untrusted.js';
 import { db } from './db.js';
 
 /**
@@ -133,7 +134,7 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
       const r = await own.impl(args, ctx);
       if (r.endTurn) markSilent(botId);
       noteToolOutcome(botId, rowSeq, { status: 'done', summary: r.summary });
-      return text(r.output);
+      return text(toolOutput(r));
     }
 
     const pol = policyFor(userId, name, args);
@@ -147,7 +148,7 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
     }
     const r = await runComposioTool(ctx, name, args);
     noteToolOutcome(botId, rowSeq, { status: r.summary === 'failed' ? 'error' : 'done', summary: r.summary === 'failed' ? 'Failed' : undefined });
-    return text(r.output);
+    return text(toolOutput(r));
   } catch (e: any) {
     const msg = String(e?.message ?? e);
     noteToolOutcome(botId, rowSeq, { status: 'error', summary: msg.slice(0, 200) });

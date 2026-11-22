@@ -15,6 +15,7 @@ import type { ActivityKind } from '../types.js';
 import { Cron } from 'croner';
 import { googleTools } from './google-tools.js';
 import { oauthProvider } from '../oauth/registry.js';
+import { composioSource, untrustedBlock } from '../lib/untrusted.js';
 
 export interface ToolCtx {
   userId: string;
@@ -31,6 +32,11 @@ export interface ToolResult {
   summary?: string;
   /** End the turn after this tool (e.g. a question was asked). */
   endTurn?: boolean;
+  /**
+   * Set when `output` carries outside content (an email, an event, a post, an app's answer): names
+   * where it came from, and the bot receives it marked as data, not instructions (lib/untrusted.ts).
+   */
+  untrusted?: string;
 }
 
 type Impl = (args: any, ctx: ToolCtx) => Promise<ToolResult>;
@@ -131,7 +137,7 @@ export const TOOLS: ToolDef[] = [
     label: 'Searching X',
     impl: async (a) => {
       const r = await xSearch(a);
-      return { output: r, summary: 'Searched X' };
+      return { output: r, summary: 'Searched X', untrusted: 'X (posts by other people)' };
     },
   },
   {
@@ -299,7 +305,8 @@ export const TOOLS: ToolDef[] = [
       const r = await ctx.askBot(ctx.botId, target.id, a.question.trim(), ctx.depth + 1);
       switch (r.status) {
         case 'answered':
-          return { output: `${target.name} answered:\n${r.text.slice(0, 12000)}`, summary: `Asked ${target.name}` };
+          // Another bot may be passing on what it read somewhere: its answer is data too.
+          return { output: `${target.name} answered:\n${untrustedBlock(`${target.name}, another bot on the team`, r.text.slice(0, 12000))}`, summary: `Asked ${target.name}` };
         case 'no_answer':
           return { output: `${target.name} finished without an answer for you. Do not ask again; go on without it or tell the user.`, summary: `${target.name} did not answer` };
         case 'timeout':
@@ -424,7 +431,7 @@ export async function runComposioTool(ctx: ToolCtx, name: string, args: any): Pr
   const payload = ok ? r.data : { error: r.error, logId: r.logId };
   let out = JSON.stringify(payload ?? null);
   if (out.length > 60000) out = out.slice(0, 60000) + '…(truncated)';
-  return { output: out, summary: ok ? 'done' : 'failed' };
+  return { output: out, summary: ok ? 'done' : 'failed', untrusted: composioSource(name) };
 }
 
 /** A Hermes tool name as the app knows it: tools served by this app's MCP server lose their `mcp_hq_` prefix. */

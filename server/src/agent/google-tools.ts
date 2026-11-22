@@ -45,7 +45,7 @@ export const googleTools: ToolDef[] = [
     label: 'Searching Gmail',
     impl: (a, ctx) => withToken(ctx.userId, 'gmail', async (token) => {
       const found = await searchMessages(token, String(a.query ?? ''), Number(a.max) || 10);
-      return { output: json({ messages: found }), summary: `Found ${found.length} message${found.length === 1 ? '' : 's'}` };
+      return { output: json({ messages: found }), summary: `Found ${found.length} message${found.length === 1 ? '' : 's'}`, untrusted: 'Gmail (emails written by other people)' };
     }),
   },
   {
@@ -56,7 +56,7 @@ export const googleTools: ToolDef[] = [
     label: 'Reading an email',
     impl: (a, ctx) => withToken(ctx.userId, 'gmail', async (token) => {
       const msg = await readMessage(token, String(a.id));
-      return { output: json(msg), summary: `Read "${msg.subject.slice(0, 60)}"` };
+      return { output: json(msg), summary: `Read "${msg.subject.slice(0, 60)}"`, untrusted: 'Gmail (an email written by someone else)' };
     }),
   },
   {
@@ -83,7 +83,7 @@ export const googleTools: ToolDef[] = [
     label: 'Checking the calendar',
     impl: (a, ctx) => withToken(ctx.userId, 'calendar', async (token) => {
       const events = await listEvents(token, { from: a.from ? String(a.from) : undefined, to: a.to ? String(a.to) : undefined, query: a.query ? String(a.query) : undefined, max: Number(a.max) || undefined });
-      return { output: json({ events }), summary: `Found ${events.length} event${events.length === 1 ? '' : 's'}` };
+      return { output: json({ events }), summary: `Found ${events.length} event${events.length === 1 ? '' : 's'}`, untrusted: 'Google Calendar (events, some created by other people)' };
     }),
   },
   {

@@ -66,6 +66,8 @@ R5, R6 and R7 work together: R7 marks what came from outside, R5 and R6 make sur
 
 ## R7. Tool results are marked as data
 
+**Status (2026-11-22).** Built on branch `feat/untrusted-results`. The open decision stays open: the CLI's own web and file tools are not wrapped.
+
 **Today.** The app's MCP tools return their output to the bot as plain text (`server/src/mcp.ts:136`, `:150`). A page, an email or a connected app's answer that contains instructions looks the same to the model as anything else.
 
 **Requirement.**
