@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS user_facts (
   hash TEXT NOT NULL,
   quote TEXT NOT NULL,
   source_text TEXT NOT NULL,
+  source_message TEXT,
   source_bot_id TEXT,
   saved_by TEXT,
   created_at INTEGER NOT NULL,
@@ -45,12 +46,16 @@ const MESSAGES = 500;
 const row = (r: any): VerifiedFact => ({ id: r.id, text: r.text, hash: r.hash, quote: r.quote, sourceText: r.source_text, createdAt: r.created_at });
 
 export function createVerifiedFacts(db: Database.Database) {
-  /** The user's own words, newest first: their messages in any of their chats or groups, typed or spoken. */
+  /**
+   * The user's own words, newest first: their messages in any of their chats or groups, typed or
+   * spoken. An option the user picked on a bot's question card is the bot's text, so it is left out.
+   */
   function userMessages(userId: string, limit = MESSAGES): (UserMessage & { botId: string })[] {
     const rows = db.prepare(`
       SELECT r.bot_id, r.generation, r.seq, r.body FROM rows r JOIN bots b ON b.id = r.bot_id
       WHERE b.user_id = ? AND r.kind = 'message' AND json_extract(r.body, '$.role') = 'user'
         AND (json_extract(r.body, '$.from.kind') IS NULL OR json_extract(r.body, '$.from.kind') = 'voice')
+        AND COALESCE(json_extract(r.body, '$.choice'), 0) = 0
       ORDER BY r.created_at DESC, r.seq DESC LIMIT ?`).all(userId, limit) as any[];
     return rows.map((r) => ({ id: `${r.bot_id}:${r.generation}:${r.seq}`, botId: r.bot_id, text: String(JSON.parse(r.body).text ?? '') }));
   }
@@ -74,8 +79,8 @@ export function createVerifiedFacts(db: Database.Database) {
       if (same) fact = row(same);
       else {
         fact = { id: `fact_${crypto.randomBytes(9).toString('base64url')}`, text, hash, quote: check.quote, sourceText: source.text.slice(0, 1000), createdAt: Date.now() };
-        db.prepare('INSERT INTO user_facts(id,user_id,text,hash,quote,source_text,source_bot_id,saved_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-          .run(fact.id, userId, text, hash, fact.quote, fact.sourceText, source.botId, savedBy, fact.createdAt);
+        db.prepare('INSERT INTO user_facts(id,user_id,text,hash,quote,source_text,source_message,source_bot_id,saved_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+          .run(fact.id, userId, text, hash, fact.quote, fact.sourceText, source.id, source.botId, savedBy, fact.createdAt);
       }
       let replaced = false;
       const old = (input.replaces ?? '').trim();

@@ -408,7 +408,8 @@ api.post('/bots/:id/cards/:seq/answer', async (c) => {
   const { answer } = await c.req.json<{ answer: string }>();
   if (!row || row.body.type !== 'card' || row.body.card !== 'question') return c.json({ error: 'not a question' }, 400);
   updateRow(b.id, row.seq, { ...row.body, status: 'answered', answer });
-  appendRow(b.id, 'message', { type: 'message', role: 'user', text: answer });
+  // An option the bot offered is the bot's words, even once the user picks it (it cannot back a fact about the user).
+  appendRow(b.id, 'message', { type: 'message', role: 'user', text: answer, ...(row.body.options?.includes(answer) ? { choice: true } : {}) });
   enqueue(b.id, { type: 'user', text: `[Answer to "${row.body.question}"] ${answer}` });
   return c.json({ ok: true });
 });

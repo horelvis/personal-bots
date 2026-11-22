@@ -44,15 +44,33 @@ function luhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
+/**
+ * A card number inside a run of digits written in groups ("4111 1111 1111 1111", "4111-1111-..."),
+ * even when more digits follow (an expiry date, a code). A card starts and ends where a group does.
+ */
+function hasCardNumber(text: string): boolean {
+  for (const m of text.matchAll(/\d+(?:[ .-]{1,2}\d+)*/g)) {
+    const groups = m[0].split(/[ .-]+/);
+    const digits = groups.join('');
+    const bounds = [0];
+    for (const g of groups) bounds.push(bounds[bounds.length - 1] + g.length);
+    for (const start of bounds) {
+      for (const end of bounds) {
+        const len = end - start;
+        if (len >= 13 && len <= 19 && luhn(digits.slice(start, end))) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** What kind of secret the text seems to hold, or null. */
 export function secretIn(text: string): string | null {
-  for (const m of text.matchAll(/(?:\d[ -]?){13,19}/g)) {
-    const digits = m[0].replace(/\D/g, '');
-    if (digits.length >= 13 && digits.length <= 19 && luhn(digits)) return 'a card number';
-  }
-  if (/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/.test(text)) return 'a key or password';
-  if (/\b(?:password|passwd|contrase[nñ]a)\s*[:=]\s*\S+/i.test(text)) return 'a key or password';
+  if (hasCardNumber(text)) return 'a card number';
+  if (/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}|\b[spr]k_(?:live|test)_[A-Za-z0-9]{10,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/-]{16,}/.test(text)) return 'a key or password';
+  if (/\b(?:password|passwd|pwd|contrase[nñ]a|clave)\s*(?:[:=]|is\b|es\b)\s*\S+/i.test(text)) return 'a key or password';
   if (/https?:\/\/\S*[?&](?:token|code|otp|key|auth|access_token|magic|signature|sig)=/i.test(text)) return 'a login link';
+  if (/\b(?:api[_-]?key|secret|token|access[_-]?key)\s*[:=]\s*\S{6,}/i.test(text)) return 'a key or password';
   return null;
 }
 

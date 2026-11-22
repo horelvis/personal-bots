@@ -70,6 +70,8 @@ export interface MessageBody {
   streaming?: boolean;
   /** Set when a message came from another bot, a routine or a voice call rather than the user typing. */
   from?: { kind: 'bot' | 'routine' | 'voice'; id: string; name: string };
+  /** The user picked this text among the options of a bot's question card: the words are the bot's. */
+  choice?: boolean;
   citations?: { url: string; title?: string }[];
 }
 

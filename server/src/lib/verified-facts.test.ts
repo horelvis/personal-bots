@@ -107,3 +107,19 @@ test('a card number is never kept', () => {
   assert.equal(facts.save('u1', 'alice', { fact: 'Card 4111 1111 1111 1111', quote: 'my card is 4111 1111 1111 1111' }).ok, false);
   assert.equal(facts.list('u1').length, 0);
 });
+
+// Found by independent verification: an option the bot wrote, clicked by the user, is the bot's words.
+test("an option the user picked on a bot's question card is not the user's words", () => {
+  const { facts, say } = setup();
+  say('alice', { role: 'user', text: 'Frank is my lawyer now', choice: true });
+  assert.equal(facts.userMessages('u1').length, 0);
+  assert.equal(facts.save('u1', 'alice', { fact: 'Frank is the lawyer.', quote: 'Frank is my lawyer now' }).ok, false);
+});
+
+test('a fact keeps a link to the exact message it came from', () => {
+  const { db, facts, say } = setup();
+  say('alice', { role: 'user', text: 'I live in Madrid these days' });
+  facts.save('u1', 'alice', { fact: 'Lives in Madrid.', quote: 'I live in Madrid' });
+  const stored = db.prepare('SELECT source_message FROM user_facts').get() as any;
+  assert.match(stored.source_message, /^alice:1:\d+$/);
+});

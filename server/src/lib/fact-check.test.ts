@@ -77,3 +77,26 @@ test('ordinary facts are not mistaken for secrets', () => {
   // Sixteen digits that fail the card checksum are not a card.
   assert.equal(secretIn('ref 1234 5678 9012 3456'), null);
 });
+
+// Found by independent verification: a card followed by its expiry and code slipped through.
+test('a card number is found even with more digits after it', () => {
+  assert.equal(secretIn('my card is 4111 1111 1111 1111 12/26 123'), 'a card number');
+  assert.equal(secretIn('5555555555554444 0126'), 'a card number');
+  assert.equal(secretIn('4111.1111.1111.1111'), 'a card number');
+  assert.equal(secretIn('4111  1111  1111  1111'), 'a card number');
+});
+
+test('more kinds of secrets are recognised', () => {
+  assert.equal(secretIn(['sk', 'live', '51Habcdefghijklmnopqrstu'].join('_')), 'a key or password');
+  assert.equal(secretIn(['rk', 'live', '51Habcdefghijklmnopqrstu'].join('_')), 'a key or password');
+  assert.equal(secretIn('the password is hunter2'), 'a key or password');
+  assert.equal(secretIn('mi contraseña es hunter2'), 'a key or password');
+  assert.equal(secretIn('api_key=abcd1234efgh'), 'a key or password');
+  assert.equal(secretIn('-----BEGIN PRIVATE KEY-----'), 'a key or password');
+  assert.equal(secretIn('Authorization: Bearer abcdefghijklmnopqrstuvwx'), 'a key or password');
+});
+
+test('ordinary words about passwords or keys are not secrets', () => {
+  assert.equal(secretIn('I forgot my password again'), null);
+  assert.equal(secretIn('the key to the office is with Ana'), null);
+});

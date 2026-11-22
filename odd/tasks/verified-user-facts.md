@@ -27,6 +27,7 @@ Branch: `feat/verified-user-facts`, stacked on `feat/untrusted-results` (R7, `a7
 - [x] T3 (S5) inline: the memory screen shows verified facts with "You said: ..." and marks a bot's own unverified entries "Only <bot>".
 - [x] T4 (S9) inline: end-to-end check (L5).
 All four are in one commit, the one that adds this line.
+- [x] T5 (S5,S6,S7) inline: correction after independent verification (L7, L8). Commit: the one that adds this line. Risk: item 1.
 
 Route: inline (one behavior; each task builds on the one before).
 
@@ -44,6 +45,15 @@ Route: inline (one behavior; each task builds on the one before).
   - An entry written straight into Alice's `USER.md` ("Likes green tea.") is listed for Alice as "only this bot" and not for Bob; Bob's instructions hold the Carol fact and neither the tea nor the Dave text.
   - Both bots list the Carol fact as verified with its source message.
   - A correction from Bob ("Rosa is my assistant now", replaces the Carol fact): "Saved for the whole team, replacing the earlier fact."; only the Rosa fact remains.
-  - Forgetting it from Bob's screen removed it for Alice too; Alice's own `USER.md` was left as it was.
+  - Forgetting it from Bob's screen removed it for Alice too; Alice's own `USER.md`, which held only "Likes green tea.", was left as it was (when a bot's file holds the same text, that line is removed too, as the assumption says).
   - Not checked: a Hermes bot (no gateway here; its instructions get the verified facts it does not hold, by the same `sharedFactsFor`), the memory screen in a browser (typecheck and build only), voice-call messages as a source (covered by the store's unit test).
 - L6 (2026-11-22) Changes to existing behavior, intended (decision S2): facts in a bot's own `USER.md` are no longer shared with the other bots (R3 shared them); existing ones stay with their bot as "only this bot". CLI bots can no longer write `USER.md` through `remember`. Every bot's tool list gains `remember_about_user`, so managed Hermes gateways restart once on the next server start.
+- L7 (2026-11-22) Independent verification of `60d44fd` (isolated server, stand-in CLI, store scripts; no model calls). S3, S4, S9 pass; S5, S6, S8 pass with residual risks; S7 failed. No quote bypass held: bot-to-bot messages, `ask_bot`, `post_to_group` by a bot, routine rows, assistant rows and another user's messages were all refused; typed, group and voice messages were accepted. Isolation held (another user's ids answer 404 or change nothing).
+  - B1 (S7): a card number followed by more digits ("4111 1111 1111 1111 12/26 123") passed the secret check, was saved and reached the other bots' instructions; the digit pattern took the longest run and checked only that.
+  - A1: an option the user picks on a bot's question card was stored as a plain user message, so text the bot wrote counted as the user's words (an email could steer a bot to offer it).
+  - Other advisories: voice requests are the voice model's wording of what the user said (counted as the user's, per S3); `replaces` can retire any fact of that user; quotes may be fragments or questions (known assumption); more secret shapes were missed (`sk_live_`, "password is", `api_key=`, private key blocks, Bearer tokens); the fact kept the source text and bot but not the message id; a Hermes bot's instructions now always carry the `remember_about_user` line (intended, L6).
+- L8 (2026-11-22) Correction, RED then GREEN (4 new tests failed first; suite 167 tests, 166 pass, 0 fail, 1 skipped; typecheck and web build pass):
+  - B1: a card is looked for at every group boundary of a run of grouped digits, so more digits after it no longer hide it.
+  - A1: a picked option is stored with `choice: true` and is not the user's words; an answer the user types themselves still is.
+  - Taken: the more secret shapes above are recognised (a login link is still named a login link); the fact stores the exact source message id.
+  - Recheck by the parent on a live isolated server, the verifier's reproductions: the card with expiry and code is refused ("It looks like a card number"); the picked option cannot back a fact; the user's own typed answer can.
