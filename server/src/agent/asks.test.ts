@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createAsks } from './asks.js';
+import { afterAnswer, askBotWaitSeconds, createAsks } from './asks.js';
 
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 
@@ -95,4 +95,50 @@ test('a timeout does not leave the circle check blocked', async () => {
   await asks.wait(asks.open('a', 'b')!);
   await tick();
   assert.notEqual(asks.open('b', 'a'), null);
+});
+
+test('ask sends the question and resolves with the answer', async () => {
+  const asks = createAsks(1000);
+  let sent = '';
+  const waiting = asks.ask('a', 'b', (id) => { sent = id; });
+  assert.notEqual(sent, '');
+  asks.settle(sent, 'yes');
+  assert.deepEqual(await waiting, { status: 'answered', text: 'yes' });
+});
+
+test('ask refuses a circle without sending anything', async () => {
+  const asks = createAsks(1000);
+  void asks.ask('a', 'b', () => {});
+  let sent = false;
+  assert.deepEqual(await asks.ask('b', 'a', () => { sent = true; }), { status: 'circle' });
+  assert.equal(sent, false);
+});
+
+// A question that could not be sent must not sit there as if someone were waiting for it.
+test('when sending fails, nobody is left waiting', async () => {
+  const asks = createAsks(1000);
+  await assert.rejects(asks.ask('a', 'b', () => { throw new Error('row write failed'); }), /row write failed/);
+  // b may ask a at once: a is not waiting for b.
+  assert.notEqual(asks.open('b', 'a'), null);
+});
+
+test('what to do when the asked bot finishes', () => {
+  // The asker has the answer already, or the question is unknown: nothing more to do.
+  assert.equal(afterAnswer('delivered', 'text'), 'nothing');
+  assert.equal(afterAnswer('unknown', 'text'), 'nothing');
+  // The asker stopped waiting and was promised a later answer.
+  assert.equal(afterAnswer('late', 'Here it is.'), 'send_reply');
+  // ...so it must also hear when none will come.
+  assert.equal(afterAnswer('late', '   '), 'say_no_answer');
+  assert.equal(afterAnswer('late', ''), 'say_no_answer');
+});
+
+test('the wait setting falls back to 9 minutes and stays under the tool-call limit', () => {
+  assert.equal(askBotWaitSeconds(undefined), 540);
+  assert.equal(askBotWaitSeconds(''), 540);
+  assert.equal(askBotWaitSeconds('abc'), 540);
+  assert.equal(askBotWaitSeconds('0'), 540);
+  assert.equal(askBotWaitSeconds('-5'), 540);
+  assert.equal(askBotWaitSeconds('6'), 6);
+  assert.equal(askBotWaitSeconds('99999999'), 1500);
 });

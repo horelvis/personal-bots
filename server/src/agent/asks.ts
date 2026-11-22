@@ -30,6 +30,32 @@ export interface Asks {
   settle(id: string, text: string | null): 'delivered' | 'late' | 'unknown';
   /** The asker's turn is over: it waits for nobody any more. Answers still to come will be late. */
   release(asker: string): void;
+  /**
+   * Open a question, hand it to `send` (which puts it in the other bot's queue) and wait. `circle`
+   * means it was not sent. If `send` throws, the question is dropped before the error is passed on,
+   * so nobody is recorded as waiting for something that was never asked.
+   */
+  ask(asker: string, target: string, send: (id: string) => void): Promise<Answer | { status: 'circle' }>;
+}
+
+/**
+ * What is left to do when the asked bot's turn ends, given what `settle` said. An asker that stopped
+ * waiting was told the answer would come later: it gets the reply as a message, or is told that
+ * none will come.
+ */
+export function afterAnswer(settled: 'delivered' | 'late' | 'unknown', reply: string): 'nothing' | 'send_reply' | 'say_no_answer' {
+  if (settled !== 'late') return 'nothing';
+  return reply.trim() ? 'send_reply' : 'say_no_answer';
+}
+
+/**
+ * Seconds ask_bot waits: 9 minutes unless set, and never more than 25 minutes, so the wait ends
+ * before the 30-minute limit the engines put on a tool call.
+ */
+export function askBotWaitSeconds(raw: string | undefined): number {
+  const n = Number(raw);
+  if (!raw?.trim() || !Number.isFinite(n) || n <= 0) return 9 * 60;
+  return Math.min(Math.max(1, Math.round(n)), 25 * 60);
 }
 
 export function createAsks(waitMs: number): Asks {
@@ -52,7 +78,7 @@ export function createAsks(waitMs: number): Asks {
     a.resolve?.({ status: 'timeout' });
   };
 
-  return {
+  const self: Asks = {
     open(asker, target) {
       // If the target already waits for the asker, the asker waiting for the target closes the circle.
       if (waitsFor(target, asker)) return null;
@@ -85,5 +111,19 @@ export function createAsks(waitMs: number): Asks {
     release(asker) {
       for (const a of asks.values()) if (a.asker === asker) giveUp(a);
     },
+
+    async ask(asker, target, send) {
+      const id = self.open(asker, target);
+      if (!id) return { status: 'circle' };
+      const waiting = self.wait(id);
+      try {
+        send(id);
+      } catch (e) {
+        self.settle(id, null);
+        throw e;
+      }
+      return waiting;
+    },
   };
+  return self;
 }

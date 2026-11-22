@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { askBotWaitSeconds } from './agent/asks.js';
 
 function req(name: string): string {
   const v = process.env[name];
@@ -37,7 +38,7 @@ export const env = {
   sessionSecret: req('SESSION_SECRET'),
   devLogin: process.env.DEV_LOGIN === '1',
   /** How long ask_bot holds a bot's turn for another bot's answer before the answer becomes a later message. */
-  askBotWaitMs: Math.max(1, Number(process.env.ASK_BOT_WAIT_SECONDS) || 9 * 60) * 1000,
+  askBotWaitMs: askBotWaitSeconds(process.env.ASK_BOT_WAIT_SECONDS) * 1000,
   dbPath: process.env.DB_PATH ?? new URL('../../data/grokbot.db', import.meta.url).pathname,
 
   // ---- Hermes engine ----
