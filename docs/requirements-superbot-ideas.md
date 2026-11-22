@@ -39,6 +39,8 @@ Status: proposed. Nothing here is scheduled or authorized for implementation. Ea
 
 ## R2. Ask another bot and wait for the answer
 
+**Status (2026-11-16).** Built as the `ask_bot` tool on branch `feat/ask-bot` (stacked on `feat/engine-adapters`); see `odd/tasks/ask-bot.md`. The waiting limit is 9 minutes, set with `ASK_BOT_WAIT_SECONDS`.
+
 **Today.** `send_to_bot` (`server/src/agent/tools.ts:269`) queues a message for the other bot and returns at once. The reply comes back later as a new message, so the asking bot ends its turn and starts another one. Hops are capped at 3.
 
 **Requirement.**
