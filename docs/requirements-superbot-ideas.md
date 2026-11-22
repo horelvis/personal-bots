@@ -78,6 +78,8 @@ Status: proposed. Nothing here is scheduled or authorized for implementation. Ea
 
 ## R4. Work survives a restart
 
+**Status (2026-11-16).** Built on branch `feat/durable-queue` (stacked on `feat/shared-user-facts`); see `odd/tasks/durable-queue.md`.
+
 **Today.** Each bot's queue is an in-memory chain of promises (`server/src/agent/loop.ts:29-40`). If the server stops, turns that were waiting are lost without a trace. A turn that was running is closed only when its own code path finishes.
 
 **Requirement.**
