@@ -57,6 +57,8 @@ Status: proposed. Nothing here is scheduled or authorized for implementation. Ea
 
 ## R3. Shared facts about the user
 
+**Status (2026-11-16).** Built on branch `feat/shared-user-facts` (stacked on `feat/ask-bot`); see `odd/tasks/shared-user-facts.md`. Both open decisions were settled by sharing through reading: no file is shared or copied, and existing entries stay where they are.
+
 **Today.** Each bot keeps `memories/MEMORY.md` and `memories/USER.md` in its own Hermes home (`server/src/engine-memory.ts`). What one bot learns about the user, the others do not know.
 
 **Requirement.**

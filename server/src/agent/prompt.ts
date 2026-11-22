@@ -6,7 +6,8 @@ import { ownServices } from './own-services.js';
 import { LIBRARY_ROOT } from './tools.js';
 import { cliAdapter } from './cli/index.js';
 import { MEMORY_TOOL } from './cli/tools.js';
-import { listMemories } from '../engine-memory.js';
+import { factLine } from '../lib/user-facts.js';
+import { listMemories, sharedFactsFor } from '../engine-memory.js';
 
 /**
  * What the app adds to the agent's own system prompt on every turn (sent as `instructions`).
@@ -37,6 +38,13 @@ export async function instructionsFor(userId: string, botId: string): Promise<st
   if (composioEnabled) {
     try { apps = [apps, ...[...(await connectedToolkits(userId))].sort()].filter(Boolean).join(', '); } catch { apps = [apps, '(could not check the others right now)'].filter(Boolean).join(', '); }
   }
+
+  // A Hermes agent has its own memory of the user; it is told what only the other agents know.
+  // (A CLI bot gets every fact in its memory section instead.) Nothing is added when there is nothing to tell.
+  const others = cli ? [] : sharedFactsFor(botId).others;
+  const teamFacts = others.length
+    ? `\n## What the team knows about ${owner}\nOther agents on the team saved these facts about ${owner}. Treat them as things you know.\n${others.map(factLine).join('\n')}\n`
+    : '';
 
   const who = primaryEngine
     ? `This conversation comes from ${owner}'s team app, where you appear as "${bot.name}"${bot.label ? ` (${bot.label})` : ''}. You are the same agent as everywhere else you talk with ${owner}: keep your own identity, memory and voice.${bot.is_primary ? ` You are ${owner}'s main point of contact in the app and coordinate with the other agents on the team.` : ''}`
@@ -69,20 +77,19 @@ You have your own screen on a Linux computer shared by the team: a desktop with 
 - User: ${owner}${user?.email ? ` <${user.email}>` : ''}
 - Connected apps: ${apps || 'none yet'}
 ${team ? `- Other agents on the team:\n${team}` : '- You are the only agent on the team so far.'}${groups ? `\n- Group chats you are in: ${groups}` : ''}
-${routines ? `\n## Your routines in the app\n${routines}\n` : ''}${skills ? `\n## Skills ${owner} gave you\n${skills}\n` : ''}${bot.instructions ? `\n## Instructions from ${owner}\n${bot.instructions}\n` : ''}`;
+${teamFacts}${routines ? `\n## Your routines in the app\n${routines}\n` : ''}${skills ? `\n## Skills ${owner} gave you\n${skills}\n` : ''}${bot.instructions ? `\n## Instructions from ${owner}\n${bot.instructions}\n` : ''}`;
 }
 
 /** What only a bot on a CLI engine is told: where it works, what needs approval, and what it remembers. */
 function cliSections(botId: string, owner: string, engineName: string): string {
-  const memories = listMemories(botId);
-  const about = (source: string) => memories.filter((m) => m.source === source).map((m) => `- ${m.text.replace(/\n+/g, ' ')}`).join('\n');
-  const mine = about('learned');
-  const user = about('chat');
+  const mine = listMemories(botId).filter((m) => m.source === 'learned').map((m) => factLine(m.text)).join('\n');
+  // Facts about the user are shared by the whole team; this bot's own notes are not.
+  const user = sharedFactsFor(botId).all.map(factLine).join('\n');
   return `## Your workspace
 You run on ${engineName}, in a folder of your own on ${owner}'s machine. You can read and search files there and on the web freely. Running a shell command that changes something, writing or editing a file, or reading outside your folder waits for ${owner} to approve it in the app, like the actions above. Keep your work inside your folder. You have no screen or browser of your own.
 
 ## Your memory
-You do not remember earlier conversations by yourself. What you saved before is below; save a new lasting fact with the ${MEMORY_TOOL} tool (about "user" for ${owner}'s facts and preferences, about "self" for your job, rules and lessons).
-${user ? `What you know about ${owner}:\n${user}` : `You have saved nothing about ${owner} yet.`}
+You do not remember earlier conversations by yourself. What you saved before is below; save a new lasting fact with the ${MEMORY_TOOL} tool (about "user" for ${owner}'s facts and preferences, about "self" for your job, rules and lessons). What is saved about ${owner} is shared with the other agents on the team; your own notes stay yours.
+${user ? `What you and the team know about ${owner}:\n${user}` : `Nothing is saved about ${owner} yet.`}
 ${mine ? `Your own notes:\n${mine}` : 'You have no notes of your own yet.'}`;
 }

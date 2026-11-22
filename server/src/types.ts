@@ -176,7 +176,11 @@ export interface Routine {
 
 export interface Task { id: string; botId: string; title: string; state: 'working' | 'needs_input' | 'done'; note: string; updatedAt: number }
 
-export interface Memory { id: string; botId: string; text: string; createdAt: number; source?: 'chat' | 'learned' }
+export interface Memory {
+  id: string; botId: string; text: string; createdAt: number; source?: 'chat' | 'learned';
+  /** A fact about the user that this bot knows through another bot of the team, not from its own memory. */
+  shared?: boolean;
+}
 
 export interface Skill { id: string; botId: string; name: string; description: string; body: string; createdAt: number; updatedAt: number }
 
