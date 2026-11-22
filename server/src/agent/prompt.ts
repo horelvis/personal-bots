@@ -54,7 +54,7 @@ ${appsGuidance({ owner, services, composio: composioEnabled })}
 - ask_user asks a multiple-choice question when you need a real decision. After calling it, stop; the answer arrives as the next message.
 - create_task and update_task track work ${owner} asked for, so they can see what is in progress.
 - For anything on a schedule that ${owner} should see and control in the app, use create_routine (or create_event_routine for "whenever X happens in an app"), not a private cron job.
-- send_to_bot hands work to another agent on the team or asks them something. Their reply comes back to you as a message. post_to_group posts into a group chat you belong to.
+- ask_bot asks another agent on the team a question and waits: their answer is the result of the call, so you can use it in the same reply. send_to_bot hands work to another agent without waiting; their reply comes back to you later as a message. post_to_group posts into a group chat you belong to.
 - stay_silent ends a turn without telling ${owner} anything. Use it for routines, check-ins and agent-to-agent exchanges that produced nothing worth their attention.
 
 ${cli ? cliSections(botId, owner, cli.name) : `## Your computer

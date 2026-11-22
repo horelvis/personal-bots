@@ -4,7 +4,7 @@ import { getBotRow } from './store.js';
 import { connectedServices } from './oauth/connections.js';
 import { composioTools } from './composio.js';
 import { mcpToken, primaryBotId } from './engine.js';
-import { claimToolRow, enqueueBotMessage, markSilent, noteToolOutcome, requestApproval, toolRowByCallId, turnDepth } from './agent/loop.js';
+import { askBot, claimToolRow, enqueueBotMessage, markSilent, noteToolOutcome, requestApproval, toolRowByCallId, turnDepth } from './agent/loop.js';
 import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agent/tools.js';
 import { cliAdapter } from './agent/cli/index.js';
 import { CLI_TOOL_DEFS, MEMORY_TOOL, PERMISSION_TOOL, permissionAnswer, permissionRule, permissionStep } from './agent/cli/tools.js';
@@ -102,7 +102,7 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
   }
   const name = [...toolMap.keys()].find((k) => k.toLowerCase() === rawName.toLowerCase()) ?? rawName;
   const rowSeq = await claimToolRow(botId, name);
-  const ctx: ToolCtx = { userId, botId, enqueueBotMessage, depth: turnDepth(botId) };
+  const ctx: ToolCtx = { userId, botId, enqueueBotMessage, askBot, depth: turnDepth(botId) };
   try {
     const own = toolMap.get(name);
     const needs = own?.approval?.needs;

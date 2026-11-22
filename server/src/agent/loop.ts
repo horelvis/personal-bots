@@ -11,6 +11,7 @@ import { instructionsFor } from './prompt.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
 import { cliAdapter, runCli, type CliAdapter } from './cli/index.js';
 import { PERMISSION_TOOL, cliActivity } from './cli/tools.js';
+import { afterAnswer, createAsks, type Answer } from './asks.js';
 
 /**
  * A turn: one message handed to the bot's engine and streamed back into the conversation.
@@ -27,7 +28,7 @@ import { PERMISSION_TOOL, cliActivity } from './cli/tools.js';
 export type Trigger =
   | { type: 'user'; text: string }
   | { type: 'routine'; routineId: string; name: string; prompt: string }
-  | { type: 'bot'; fromBotId: string; fromName: string; text: string; depth: number }
+  | { type: 'bot'; fromBotId: string; fromName: string; text: string; depth: number; /** Set when the sender is waiting for the reply (ask_bot). */ askId?: string }
   | { type: 'system'; text: string };
 
 // ---------- per-bot serial queue ----------
@@ -61,17 +62,32 @@ export function runInBotQueue<T>(botId: string, job: () => Promise<T>): Promise<
 
 export const isBotBusy = (botId: string) => queues.has(botId);
 
-export function enqueueBotMessage(fromBotId: string, toBotId: string, text: string, depth: number) {
+export function enqueueBotMessage(fromBotId: string, toBotId: string, text: string, depth: number, askId?: string) {
   const from = getBotRow(fromBotId);
   appendRow(toBotId, 'message', { type: 'message', role: 'user', text, from: { kind: 'bot', id: fromBotId, name: from.name } });
-  enqueue(toBotId, { type: 'bot', fromBotId, fromName: from.name, text, depth });
+  enqueue(toBotId, { type: 'bot', fromBotId, fromName: from.name, text, depth, ...(askId ? { askId } : {}) });
+}
+
+// ---------- one bot waiting for another's answer ----------
+
+// Past the limit (ASK_BOT_WAIT_SECONDS, 9 minutes by default) the answer arrives later as a message.
+const asks = createAsks(env.askBotWaitMs);
+
+/**
+ * Put a question in another bot's chat and wait for the reply it writes there. `circle` means the
+ * other bot is itself waiting for this one, so the question was not sent.
+ */
+export function askBot(fromBotId: string, toBotId: string, text: string, depth: number): Promise<Answer | { status: 'circle' }> {
+  return asks.ask(fromBotId, toBotId, (id) => enqueueBotMessage(fromBotId, toBotId, text, depth, id));
 }
 
 function triggerText(t: Trigger): string {
   switch (t.type) {
     case 'user': return t.text;
     case 'routine': return `[Routine "${t.name}" is running now. Do this:]\n${t.prompt}`;
-    case 'bot': return `[Message from ${t.fromName}, another Bot on the team. Reply to them with send_to_bot if they asked you something.]\n${t.text}`;
+    case 'bot':
+      if (t.askId) return `[Question from ${t.fromName}, another Bot on the team. They are waiting for your answer right now: write it here as your reply, plainly and complete. Do not use send_to_bot or ask_bot to answer them.]\n${t.text}`;
+      return `[Message from ${t.fromName}, another Bot on the team. Reply to them with send_to_bot if they asked you something.]\n${t.text}`;
     case 'system': return `[System notice] ${t.text}`;
   }
 }
@@ -322,7 +338,11 @@ const TOOLBOX = new Set(['tool_search', 'tool_describe']);
 
 async function runTurn(botId: string, trigger: Trigger) {
   const bot = getBotRow(botId);
-  if (!bot || bot.kind === 'room') return;
+  if (!bot || bot.kind === 'room') {
+    // The bot was removed while this turn sat in its queue: whoever asked it is told there is no answer.
+    if (trigger.type === 'bot' && trigger.askId) asks.settle(trigger.askId, null);
+    return;
+  }
   const userId: string = bot.user_id;
   const ctrl = new AbortController();
   aborts.set(botId, ctrl);
@@ -341,9 +361,12 @@ async function runTurn(botId: string, trigger: Trigger) {
     else updateRow(botId, msgSeq, b);
     lastFlush = Date.now();
   };
+  // Everything the bot said in this turn, for a bot that is waiting for the answer (ask_bot).
+  const said: string[] = [];
   const closeMessage = () => {
     if (msgSeq === null) return;
     if (text.trim()) {
+      said.push(text.trim());
       flush(false);
       db.prepare('UPDATE bots SET unread = unread + 1 WHERE id=?').run(botId);
     } else updateRow(botId, msgSeq, { type: 'message', role: 'assistant', text: '', streaming: false });
@@ -353,6 +376,7 @@ async function runTurn(botId: string, trigger: Trigger) {
   const say = (t: string) => {
     if (turn.silent || !t.trim()) return;
     closeMessage();
+    said.push(t.trim());
     appendRow(botId, 'message', { type: 'message', role: 'assistant', text: t.trim(), streaming: false });
     db.prepare('UPDATE bots SET unread = unread + 1 WHERE id=?').run(botId);
     wroteText = true;
@@ -428,8 +452,9 @@ async function runTurn(botId: string, trigger: Trigger) {
           const row = appendRow(botId, 'tool-call', { type: 'tool-call', callId: ev.callId, name, label: act.label, status: 'running', args: ev.args } satisfies ToolCallBody);
           turn.tools.push({ seq: row.seq, callId: ev.callId, name, claimed: false, done: false });
           steps++;
-          const kind: ActivityKind = name === 'send_to_bot' ? 'messaging_named' : act.kind;
-          const detail = name === 'send_to_bot' ? String(ev.args?.bot_name ?? '') || undefined : act.detail;
+          const toBot = name === 'send_to_bot' || name === 'ask_bot';
+          const kind: ActivityKind = toBot ? 'messaging_named' : act.kind;
+          const detail = toBot ? String(ev.args?.bot_name ?? '') || undefined : act.detail;
           if (!getLive(botId).awaiting) setLive(botId, { isRunning: true, activity: { kind, detail, since: now() }, steps, caption: null });
           else setLive(botId, { steps });
           reasoning = '';
@@ -541,8 +566,9 @@ async function runTurn(botId: string, trigger: Trigger) {
             const row = appendRow(botId, 'tool-call', { type: 'tool-call', callId: String(item.call_id ?? item.id ?? ''), name, label: act.label, status: 'running', args } satisfies ToolCallBody);
             turn.tools.push({ seq: row.seq, callId: String(item.call_id ?? item.id ?? ''), name, claimed: false, done: false });
             steps++;
-            const kind: ActivityKind = name === 'send_to_bot' ? 'messaging_named' : act.kind;
-            const detail = name === 'send_to_bot' ? String(args?.bot_name ?? '') || undefined : act.detail;
+            const toBot = name === 'send_to_bot' || name === 'ask_bot';
+            const kind: ActivityKind = toBot ? 'messaging_named' : act.kind;
+            const detail = toBot ? String(args?.bot_name ?? '') || undefined : act.detail;
             // A call that is waiting for the user keeps its "waiting for you" state.
             if (!getLive(botId).awaiting) setLive(botId, { isRunning: true, activity: { kind, detail, since: now() }, steps, caption: null });
             else setLive(botId, { steps });
@@ -606,6 +632,23 @@ async function runTurn(botId: string, trigger: Trigger) {
     }
     if (aborts.get(botId) === ctrl) aborts.delete(botId);
     if (turns.get(botId) === turn) turns.delete(botId);
+    // This bot's turn is over: it waits for nobody any more, and whoever asked it gets its reply.
+    asks.release(botId);
+    if (trigger.type === 'bot' && trigger.askId) {
+      const reply = said.join('\n\n');
+      // An asker that stopped waiting (the limit passed, or its turn ended) was told the answer would
+      // come later. This is cleanup: a failure here must not skip what follows.
+      try {
+        const next = afterAnswer(asks.settle(trigger.askId, reply), reply);
+        // Either bot may have been removed in the meantime; then there is nobody to tell, or nobody to tell it from.
+        if (next !== 'nothing' && getBotRow(trigger.fromBotId) && getBotRow(botId)) {
+          if (next === 'send_reply') enqueueBotMessage(botId, trigger.fromBotId, reply.slice(0, 12000), trigger.depth + 1);
+          else enqueue(trigger.fromBotId, { type: 'system', text: `${bot.name} finished without an answer to the question you asked with ask_bot. No answer will arrive; go on without it or tell the user.` });
+        }
+      } catch (e: any) {
+        console.warn(`[agent] ${botId}: could not pass a late answer on: ${e?.message ?? e}`);
+      }
+    }
     // An approval asked for outside this turn may still be waiting; leave its state alone.
     if (!pendingApprovals(botId).length) setLive(botId, { isRunning: false, activity: null, awaiting: null, startedAt: null, caption: null });
     else setLive(botId, { isRunning: false, caption: null });
