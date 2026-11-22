@@ -19,8 +19,8 @@ export const CLI_TOOL_DEFS = [
   },
   {
     name: MEMORY_TOOL,
-    description: 'Save one lasting note to your memory, so you still know it in later conversations. about "user": a fact or preference of the user. about "self": something about your job, a rule you were given, or what you learned doing it. One short entry per call; do not save secrets or things that only matter today.',
-    inputSchema: { type: 'object', properties: { about: { type: 'string', enum: ['user', 'self'] }, text: { type: 'string' } }, required: ['about', 'text'] },
+    description: 'Save one lasting note of your own, so you still know it in later conversations: something about your job, a rule you were given, or what you learned doing it (about "self"). Facts about the user go through remember_about_user instead. One short entry per call; do not save secrets or things that only matter today.',
+    inputSchema: { type: 'object', properties: { about: { type: 'string', enum: ['self'] }, text: { type: 'string' } }, required: ['about', 'text'] },
   },
 ];
 

@@ -348,8 +348,13 @@ function MemoriesTab({ bot, data, onChange }: { bot: Bot; data: BotSettingsBundl
             <div key={m.id} className="cfg-item">
               <div className="cfg-item__text">
                 <div className="cfg-item__body">{m.text}</div>
+                {m.verified && <div className="cfg-item__source" title="The message this fact comes from">You said: “{m.verified.message}”</div>}
                 <div className="cfg-item__meta">
-                  {m.shared ? <span className="cfg-chip cfg-chip--muted" title="Another Bot on the team saved this. Forgetting it removes it for every Bot.">From the team</span> : m.source === 'learned' ? <span className="cfg-chip">Picked up</span> : <span className="cfg-chip cfg-chip--muted">Saved in chat</span>}
+                  {m.verified
+                    ? <span className="cfg-chip" title="Your own words back this fact, so every Bot on the team knows it. Forgetting it removes it for every Bot.">{m.shared ? 'Verified · from the team' : 'Verified'}</span>
+                    : m.onlyThisBot
+                      ? <span className="cfg-chip cfg-chip--muted" title={`${bot.name} noted this on its own. It is not checked against your words, so the other Bots do not use it.`}>Only {bot.name}</span>
+                      : m.source === 'learned' ? <span className="cfg-chip">Picked up</span> : <span className="cfg-chip cfg-chip--muted">Saved in chat</span>}
                   <span>{shortDate(m.createdAt)}</span>
                 </div>
               </div>

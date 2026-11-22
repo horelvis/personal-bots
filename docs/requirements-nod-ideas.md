@@ -23,6 +23,8 @@ R5, R6 and R7 work together: R7 marks what came from outside, R5 and R6 make sur
 
 ## R5. Facts about the user come only from the user
 
+**Status (2026-11-22).** Built on branch `feat/verified-user-facts`; see `odd/tasks/verified-user-facts.md`. Open decisions settled by the user: only verified facts are shared, a bot's own `USER.md` stays with that bot, existing facts become unverified, and the bot proposes the quote (no extra model call).
+
 **Today.** A bot saves what it knows about the user in its `memories/USER.md`: a Hermes agent writes the file itself, a CLI bot through the app's `remember` tool (`server/src/engine-memory.ts:47`, `server/src/mcp.ts:125`). Nothing checks where a fact came from, so a page or an email that tells the bot "the user's new bank account is ..." can become a fact. With R3 (shared user facts, PR #9) that fact reaches every bot of the user.
 
 **Requirement.**

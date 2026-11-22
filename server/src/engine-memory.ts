@@ -3,7 +3,8 @@ import path from 'node:path';
 import { sha256 } from './lib/ids.js';
 import { db } from './db.js';
 import { engineHome } from './engine.js';
-import { factsFor, mergeFacts, withoutFact, type Fact } from './lib/user-facts.js';
+import { factHash, factsFor, mergeFacts, withoutFact } from './lib/user-facts.js';
+import { createVerifiedFacts, type VerifiedFact } from './lib/verified-facts.js';
 import type { Memory } from './types.js';
 
 /**
@@ -11,10 +12,11 @@ import type { Memory } from './types.js';
  * agent's own notes) and `memories/USER.md` (what it knows about the user). Each file is a list of
  * entries separated by a line holding only "§". The app shows them and lets the user remove one.
  *
- * `MEMORY.md` is private to its bot. What the bots know about the user is shared: each bot still
- * writes its own `USER.md`, and the app reads all of a user's bots together (lib/user-facts.ts), so
- * a fact is shown once, reaches every bot, and is removed from every bot at once. No file is copied
- * from one bot to another.
+ * `MEMORY.md` is private to its bot. So is its `USER.md`: what a bot noted about the user on its
+ * own is not checked, so it stays with that bot. What the user's own words back is a verified fact
+ * (lib/verified-facts.ts, saved through the `remember_about_user` tool): those are kept once per
+ * user, reach every bot of that user, and are shown with the message they came from. Removing a
+ * fact about the user removes it everywhere: from the verified facts and from every bot's file.
  */
 
 const SEP = '\n§\n';
@@ -49,25 +51,37 @@ const ownerOf = (botId: string): string | null => (db.prepare('SELECT user_id FR
 const botsOf = (userId: string): string[] =>
   (db.prepare("SELECT id FROM bots WHERE user_id=? AND COALESCE(kind,'agent')<>'room' ORDER BY created_at, id").all(userId) as any[]).map((b) => b.id as string);
 
-/** Everything the user's bots know about the user, each fact once, and when its first holder's file last changed. */
-function userFacts(userId: string): { facts: Fact[]; mtimes: Map<string, number> } {
-  const mtimes = new Map<string, number>();
-  const perBot = botsOf(userId).map((botId) => {
-    const file = userFile(botId);
-    const { entries, mtime } = file ? read(file) : { entries: [], mtime: 0 };
-    mtimes.set(botId, mtime);
-    return { botId, entries };
-  });
-  return { facts: mergeFacts(perBot), mtimes };
-}
+/** The verified facts about each user (one list per user, shared by all of that user's bots). */
+export const verifiedFacts = createVerifiedFacts(db);
 
-/** The user facts to put in a bot's instructions: those it does not hold itself, and all of them. */
+/** Key of a verified fact in a memory id; `u` and `m` are a bot's own files. */
+const VERIFIED = 'v';
+
+const ownEntries = (botId: string) => {
+  const file = userFile(botId);
+  return file ? read(file) : { entries: [], mtime: 0 };
+};
+
+/**
+ * The user facts to put in a bot's instructions. `others`: the verified facts it does not hold in its
+ * own file (a Hermes agent already has its own in its memory). `all`: its own entries, then those.
+ */
 export function sharedFactsFor(botId: string): { others: string[]; all: string[] } {
   const owner = ownerOf(botId);
-  return owner ? factsFor(userFacts(owner).facts, botId) : { others: [], all: [] };
+  if (!owner) return { others: [], all: [] };
+  const facts = mergeFacts([
+    { botId, entries: ownEntries(botId).entries },
+    { botId: '@verified', entries: verifiedFacts.list(owner).map((f) => f.text) },
+  ]);
+  return factsFor(facts, botId);
 }
 
-/** A bot's own notes, then what all of its user's bots know about the user (each fact once). */
+const verifiedMeta = (f: VerifiedFact) => ({ verified: { quote: f.quote, message: f.sourceText } });
+
+/**
+ * A bot's own notes; its own entries about the user (verified when the team holds the same fact,
+ * otherwise kept by this bot only); then the verified facts it knows through the team.
+ */
 export function listMemories(botId: string): Memory[] {
   const home = engineHome(botId);
   const owner = ownerOf(botId);
@@ -75,12 +89,19 @@ export function listMemories(botId: string): Memory[] {
   const out: Memory[] = [];
   const notes = read(path.join(home, 'memories', NOTES.file));
   for (const text of notes.entries) out.push({ id: idFor(botId, NOTES.key, text), botId, text, createdAt: Math.round(notes.mtime), source: NOTES.source });
-  const { facts, mtimes } = userFacts(owner);
-  // The bot's own facts first, as they were listed before sharing; then what it knows through the team.
-  const has = (f: Fact) => f.bots.includes(botId);
-  for (const f of [...facts.filter(has), ...facts.filter((f) => !has(f))]) {
-    const mine = has(f);
-    out.push({ id: idFor(botId, USER.key, f.text), botId, text: f.text, createdAt: Math.round(mtimes.get(mine ? botId : f.bots[0]) ?? 0), source: USER.source, ...(mine ? {} : { shared: true }) });
+  const verified = new Map(verifiedFacts.list(owner).map((f) => [f.hash, f]));
+  const own = ownEntries(botId);
+  const ownHashes = new Set<string>();
+  for (const text of own.entries) {
+    const h = factHash(text);
+    if (ownHashes.has(h)) continue;
+    ownHashes.add(h);
+    const v = verified.get(h);
+    out.push({ id: idFor(botId, USER.key, text), botId, text, createdAt: Math.round(own.mtime), source: USER.source, ...(v ? verifiedMeta(v) : { onlyThisBot: true }) });
+  }
+  for (const f of verified.values()) {
+    if (ownHashes.has(f.hash)) continue;
+    out.push({ id: idFor(botId, VERIFIED, f.text), botId, text: f.text, createdAt: f.createdAt, source: USER.source, shared: true, ...verifiedMeta(f) });
   }
   return out;
 }
@@ -118,12 +139,14 @@ export function deleteMemory(id: string): boolean {
   const botId = memoryBot(id);
   const home = botId ? engineHome(botId) : null;
   if (!botId || !home) return false;
-  const f = FILES.find((x) => x.key === id.split('.')[2]);
+  const key = id.split('.')[2];
+  const f = key === VERIFIED ? USER : FILES.find((x) => x.key === key);
   if (!f) return false;
   if (f.key === USER.key) {
     const owner = ownerOf(botId);
     if (!owner) return false;
-    let removed = false;
+    // A verified fact, and the same text in any of the user's bots' own files.
+    let removed = verifiedFacts.remove(owner, id.split('.')[3]) > 0;
     for (const other of botsOf(owner)) {
       const file = userFile(other);
       if (!file) continue;

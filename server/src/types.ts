@@ -178,8 +178,12 @@ export interface Task { id: string; botId: string; title: string; state: 'workin
 
 export interface Memory {
   id: string; botId: string; text: string; createdAt: number; source?: 'chat' | 'learned';
-  /** A fact about the user that this bot knows through another bot of the team, not from its own memory. */
+  /** A fact about the user that this bot knows through the team, not from its own memory. */
   shared?: boolean;
+  /** Backed by the user's own words: the quote and the message it came from. Shared by all of the user's bots. */
+  verified?: { quote: string; message: string };
+  /** Noted by this bot on its own and not verified, so the other bots do not use it. */
+  onlyThisBot?: boolean;
 }
 
 export interface Skill { id: string; botId: string; name: string; description: string; body: string; createdAt: number; updatedAt: number }

@@ -124,9 +124,10 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
       }
     }
     if (name === MEMORY_TOOL && cliAdapter(bot.engine)) {
-      const about = args?.about === 'user' ? 'u' : args?.about === 'self' ? 'm' : null;
-      if (!about || typeof args?.text !== 'string' || !args.text.trim()) return text('Give about ("user" or "self") and the text to remember.', true);
-      const added = addMemory(botId, about, args.text);
+      // Facts about the user go through remember_about_user, which checks the user said them.
+      if (args?.about === 'user') return text('Facts about the user are saved with remember_about_user, with the user\'s own words as quote. remember keeps your own notes (about "self").', true);
+      if (args?.about !== 'self' || typeof args?.text !== 'string' || !args.text.trim()) return text('Give about "self" and the text to remember.', true);
+      const added = addMemory(botId, 'm', args.text);
       noteToolOutcome(botId, rowSeq, { status: 'done', summary: added ? 'Saved' : 'Already known' });
       return text(added ? 'Saved to your memory.' : 'That was already in your memory.');
     }

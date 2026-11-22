@@ -98,6 +98,7 @@
 .cfg-item__title { font-size: 13px; font-weight: 500; line-height: 18px; color: var(--color-text-primary); }
 .cfg-item__sub { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cfg-item__body { font-size: 13px; line-height: 19px; color: var(--color-text-primary); overflow-wrap: anywhere; }
+.cfg-item__source { margin-top: 2px; font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); font-style: italic; overflow-wrap: anywhere; }
 .cfg-item__meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
 .cfg-item__prompt { margin-top: 4px; font-size: 12px; line-height: 17px; color: var(--color-text-secondary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .cfg-item__actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
