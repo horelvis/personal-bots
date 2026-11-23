@@ -19,6 +19,7 @@ import { desSelfTest } from './lib/des.js';
 import { configApi } from './routes-config.js';
 import { startIdleWatcher } from './idle.js';
 import { mcpApi } from './mcp.js';
+import { cliModelApi } from './cli-model.js';
 import { initEngines } from './engine.js';
 import { TOOLS } from './agent/tools.js';
 import { toolsStamp } from './agent/apps-guidance.js';
@@ -33,6 +34,8 @@ const app = new Hono();
 app.get('/api/health', (c) => c.json({ ok: true, engine: 'hermes' }));
 // The app's tools for the agent engines (MCP).
 app.route('/mcp', mcpApi);
+// The model, for CLI bots that run in a container: the real token is added here (R8).
+app.route('/cli-model', cliModelApi);
 app.route('/api/checkins', checkinsApi);
 app.route('/api/rooms', roomsApi);
 app.route('/api', api);

@@ -56,6 +56,15 @@ export const env = {
   enginePortBase: Number(process.env.ENGINE_PORT_BASE ?? 8650),
   /** URL the Hermes gateways use to reach this server's MCP endpoint. */
   mcpBaseUrl: (process.env.MCP_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 8787}`).replace(/\/+$/, ''),
+  /**
+   * Where CLI bots run (R8): 'docker' = each turn in its own container (see agent/cli/sandbox.ts);
+   * empty = on this host, as the server's user, as before.
+   */
+  cliSandbox: process.env.CLI_SANDBOX === 'docker' ? 'docker' as const : '' as const,
+  /** The user's Claude subscription token (`claude setup-token`). In a container's turn it is added by the model proxy, never passed in. */
+  claudeOauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '',
+  /** Where the model proxy sends a container's model requests. */
+  cliModelUpstream: (process.env.CLI_MODEL_UPSTREAM ?? 'https://api.anthropic.com').replace(/\/+$/, ''),
   /** Extra MCP servers every managed bot gets, as a JSON object of Hermes `mcp_servers` entries (e.g. X's XMCP). */
   extraMcpServers: process.env.EXTRA_MCP_SERVERS ?? '',
   primaryBotName: process.env.PRIMARY_BOT_NAME ?? 'Doug',
