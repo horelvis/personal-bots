@@ -220,7 +220,7 @@ function RulesCard() {
   );
 }
 
-const NO_LONGER_ALWAYS = ['cli_bash', 'cli_read', 'create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins'];
+const NO_LONGER_ALWAYS = ['cli_bash', 'cli_read', 'create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins', 'memory_note'];
 
 function PermissionsSection() {
   const [policies, setPolicies] = useState<{ tool: string; mode: string }[] | null>(null);

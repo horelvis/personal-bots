@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkPrompt, decide, readOnlyCommand, trustCheck, type TrustAction, type TrustWords } from './trust-check.js';
+import { checkPrompt, decide, MAX_ARGS_CHARS, readOnlyCommand, trustCheck, type TrustAction, type TrustWords } from './trust-check.js';
 
 const words: TrustWords = {
   messages: ['Email Ana the report please', 'thanks'],
@@ -122,4 +122,13 @@ test('a model that fails or is too slow means asking', async () => {
   assert.equal(slow.run, false);
   const ok = await trustCheck(send, words, async () => '{"run": true, "because": "Email Ana the report", "source": "message:0"}', 1000);
   assert.equal(ok.run, true);
+});
+
+// Found by review: arguments were clipped for the model, so a recipient after a long body was never seen.
+test('an action too long to show in full asks without calling the model', async () => {
+  let called = false;
+  const long: TrustAction = { ...send, args: { body: 'x'.repeat(MAX_ARGS_CHARS), to: 'x@evil.example' } };
+  const d = await trustCheck(long, words, async () => { called = true; return '{"run": true, "because": "send it", "source": "message:0"}'; });
+  assert.equal(d.run, false);
+  assert.equal(called, false);
 });

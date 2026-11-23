@@ -111,6 +111,6 @@ test('the check is told what kind of action it is', () => {
 });
 
 // Found by verification (B3): one "Always allow" on routines removed the check for good.
-test('routine changes never offer "Always allow"', () => {
-  for (const t of ['create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins']) assert.equal(alwaysAllowOffered(t), false, t);
+test("routine changes and self notes never offer \"Always allow\"", () => {
+  for (const t of ['create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins', 'memory_note']) assert.equal(alwaysAllowOffered(t), false, t);
 });

@@ -90,7 +90,7 @@ export function permissionStep(tool: string, mode: string | undefined): 'allow' 
  * Keys never allowed for good with one click: shell commands and reads (rules cover them), and
  * changes to routines, whose instructions later count as the user's words.
  */
-const NEVER_ALWAYS = new Set(['cli_bash', 'cli_read', 'create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins']);
+const NEVER_ALWAYS = new Set(['cli_bash', 'cli_read', 'create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins', 'memory_note']);
 
 /** Whether an approval card may offer "Always allow". */
 export const alwaysAllowOffered = (key: string) => !NEVER_ALWAYS.has(key);

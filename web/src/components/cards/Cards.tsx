@@ -25,7 +25,7 @@ export const humanizeToolkit = (slug: string) => KNOWN[slug.toLowerCase()] ?? sl
 // ---------------- approval ----------------
 
 /** Never allowed for good with one click (R6): shell commands, reads and routine changes. Mirrors the server's list. */
-const NEVER_ALWAYS = ['cli_bash', 'cli_read', 'create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins'];
+const NEVER_ALWAYS = ['cli_bash', 'cli_read', 'create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins', 'memory_note'];
 
 const APPROVAL_OUTCOME: Record<string, string> = { allowed: 'Allowed once', always: 'Always allowed', denied: 'Not allowed', expired: 'Expired' };
 

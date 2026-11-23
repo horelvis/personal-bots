@@ -60,7 +60,7 @@ export function checkPrompt(action: TrustAction, words: TrustWords): { system: s
     `The user's rules:\n${words.rules.trim() ? `[rules] ${clip(words.rules.trim(), 4000)}` : '(none)'}`,
   ];
   if (words.routine) parts.push(`This is a scheduled routine. Its instruction:\n[routine] ${clip(words.routine, 2000)}`);
-  parts.push(`The action:\nTool: ${action.tool}\nWhat it does: ${action.title}\nArguments: ${clip(JSON.stringify(action.args ?? {}), 6000)}`);
+  parts.push(`The action:\nTool: ${action.tool}\nWhat it does: ${action.title}\nArguments: ${JSON.stringify(action.args ?? {})}`);
   return { system: SYSTEM, user: parts.join('\n\n') };
 }
 
@@ -97,6 +97,8 @@ export function readOnlyCommand(command: string): boolean {
   return !tokens.slice(1).some((t) => /^[\/~]/.test(t) || t === '..' || t.startsWith('../') || t.includes('/../') || t.endsWith('/..') || /^[^=]+=[\/~]/.test(t));
 }
 
+/** Longest argument text the check reads; longer actions always ask. */
+export const MAX_ARGS_CHARS = 6000;
 const MIN_QUOTE_WORDS = 2;
 const MIN_QUOTE_CHARS = 8;
 
@@ -147,6 +149,8 @@ export async function trustCheck(
   ask: (prompt: { system: string; user: string }) => Promise<string>,
   timeoutMs = 15_000,
 ): Promise<TrustDecision> {
+  // The model must see the whole action: arguments too long to show in full always ask the user.
+  if (JSON.stringify(action.args ?? {}).length > MAX_ARGS_CHARS) return { run: false, reason: 'This action is too long to check automatically.' };
   let timer: NodeJS.Timeout | undefined;
   try {
     const raw = await Promise.race([
