@@ -79,6 +79,14 @@ test('a read outside the bot folder needs the user words', () => {
   assert.equal(decide('{"run": true, "because": "please read /home/u/notes/todo.txt", "source": "message:0"}', asked, { ...outside, args: { file_path: '/home/u/notes/todo.txt' } }).run, true);
 });
 
+// Found by the recheck (B4): flags that run programs, write files or never end, and braces that leave the folder.
+test('allowed commands with flags that write, run programs or leave the folder are not reads', () => {
+  for (const c of ['rg --pre=rm x .', 'rg --pre rm x .', 'rg --pre-glob "*" x .', 'cat {/etc,x}/passwd', 'cat {..,.}/{..,.}/secret', 'tree -o notes.md', 'file -C -m x', 'date -s 2020-01-01', 'tail -f log.txt', 'tail -F log.txt', 'tail --follow log.txt', 'tail -nf 5 log.txt']) {
+    assert.equal(readOnlyCommand(c), false, c);
+  }
+  for (const c of ['rg todo .', 'tail -n 5 log.txt', 'date']) assert.equal(readOnlyCommand(c), true, c);
+});
+
 // Found by verification: a one-letter quote was enough.
 test('a quote too short to mean anything is refused', () => {
   for (const q of ['e', 'Ana', 'the', 'ok']) {

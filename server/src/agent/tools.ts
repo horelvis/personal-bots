@@ -230,9 +230,11 @@ export const TOOLS: ToolDef[] = [
     impl: async (a, ctx) => {
       const cur = db.prepare('SELECT * FROM routines WHERE id=? AND bot_id=?').get(a.routine_id, ctx.botId) as any;
       if (!cur) return { output: 'No such routine.' };
-      const next = { ...cur, name: a.name ?? cur.name, prompt: a.prompt ?? cur.prompt, schedule: a.schedule ?? cur.schedule, timezone: a.timezone ?? cur.timezone, enabled: a.enabled === undefined ? cur.enabled : a.enabled ? 1 : 0 };
+      const next = { ...cur, name: a.name ?? cur.name, prompt: a.prompt ?? cur.prompt, schedule: a.schedule ?? cur.schedule, timezone: a.timezone ?? cur.timezone, enabled: a.enabled === undefined ? cur.enabled : a.enabled ? 1 : 0,
+        // The instruction counts as the user's words only once it went through the check (R6); renaming or re-enabling keeps it as it was.
+        authorized: a.prompt === undefined ? cur.authorized : 1 };
       try { new Cron(next.schedule, { paused: true, timezone: next.timezone }); } catch (e: any) { return { output: `Invalid schedule: ${e.message}` }; }
-      db.prepare('UPDATE routines SET name=?,prompt=?,schedule=?,timezone=?,enabled=?,authorized=1 WHERE id=?').run(next.name, next.prompt, next.schedule, next.timezone, next.enabled, cur.id);
+      db.prepare('UPDATE routines SET name=?,prompt=?,schedule=?,timezone=?,enabled=?,authorized=? WHERE id=?').run(next.name, next.prompt, next.schedule, next.timezone, next.enabled, next.authorized, cur.id);
       const r = toRoutine(db.prepare('SELECT * FROM routines WHERE id=?').get(cur.id));
       r.enabled ? scheduleRoutine(r) : unscheduleRoutine(r.id);
       appendRow(ctx.botId, 'event', { type: 'event', event: 'routine-updated', text: `Routine updated: ${r.name} · ${r.enabled ? r.description : 'Paused'}`, ref: r.id });

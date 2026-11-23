@@ -65,7 +65,12 @@ export function checkPrompt(action: TrustAction, words: TrustWords): { system: s
 }
 
 /** Commands that only read, when nothing in the line changes, writes or leaves the folder. */
-const READERS = new Set(['ls', 'pwd', 'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'echo', 'date', 'whoami', 'find', 'stat', 'file', 'du', 'tree', 'git']);
+const READERS = new Set(['ls', 'pwd', 'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'echo', 'date', 'whoami', 'find', 'stat', 'du', 'git']);
+/** Flags of listed commands that run another program, write, change the system or never end. */
+const RISKY_FLAGS: Record<string, RegExp> = {
+  rg: /^--pre(?:-glob)?(?:=|$)/,
+  tail: /^(?:--follow|--retry|-[^-]*[fF])/,
+};
 const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'ls-files', 'rev-parse', 'blame']);
 const FIND_WRITES = /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)$/;
 
@@ -76,11 +81,14 @@ const FIND_WRITES = /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fl
  */
 export function readOnlyCommand(command: string): boolean {
   const cmd = command.trim();
-  if (!cmd || /[;&|<>`$\\\n\r]/.test(cmd)) return false;
+  // Braces are expanded by the shell into paths no check below would see, e.g. {/etc,x}/passwd.
+  if (!cmd || /[;&|<>`$\\\n\r{}]/.test(cmd)) return false;
   const tokens = cmd.match(/"[^"]*"|'[^']*'|\S+/g)?.map((t) => t.replace(/^["']|["']$/g, '')) ?? [];
   const [bin, sub] = tokens;
   if (!READERS.has(bin)) return false;
   if (bin === 'git' && !GIT_READS.has(sub ?? '')) return false;
+  if (bin === 'date' && tokens.length > 1) return false;
+  if (RISKY_FLAGS[bin] && tokens.slice(1).some((t) => RISKY_FLAGS[bin].test(t))) return false;
   if (tokens.some((t) => /^--?output/.test(t))) return false;
   if (bin === 'find' && tokens.some((t) => FIND_WRITES.test(t))) return false;
   // Paths stay in the folder: nothing absolute, from the home folder, or above.
