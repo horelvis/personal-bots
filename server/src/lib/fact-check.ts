@@ -26,6 +26,16 @@ function plain(text: string): string {
 /** A quote as the bot gave it, without the quotation marks or final full stop it may have added. */
 const bare = (quote: string) => plain(quote).replace(/^["'.\s]+|["'.!?…\s]+$/g, '').trim();
 
+/**
+ * Two wordings of the same fact, as a bot may copy it back: case, spaces, accents, surrounding
+ * quotes, a final full stop and a leading list mark do not matter.
+ */
+export function samePhrase(a: string, b: string): boolean {
+  const norm = (s: string) => bare(plain(s).replace(/^(?:[-*•·]|\d+[.)])\s*/, ''));
+  const x = norm(a);
+  return !!x && x === norm(b);
+}
+
 /** The newest of the user's messages that holds the quote, or null. */
 export function findQuote(quote: string, messages: UserMessage[]): UserMessage | null {
   const needle = bare(quote);

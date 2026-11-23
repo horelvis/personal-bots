@@ -28,6 +28,7 @@ Branch: `feat/verified-user-facts`, stacked on `feat/untrusted-results` (R7, `a7
 - [x] T4 (S9) inline: end-to-end check (L5).
 All four are in one commit, the one that adds this line.
 - [x] T5 (S5,S6,S7) inline: correction after independent verification (L7, L8). Commit: the one that adds this line. Risk: item 1.
+- [x] T6 (S8) inline: correction asked by the native review (L9). Commit: the one that adds this line. Risk: item 1.
 
 Route: inline (one behavior; each task builds on the one before).
 
@@ -57,3 +58,10 @@ Route: inline (one behavior; each task builds on the one before).
   - A1: a picked option is stored with `choice: true` and is not the user's words; an answer the user types themselves still is.
   - Taken: the more secret shapes above are recognised (a login link is still named a login link); the fact stores the exact source message id.
   - Recheck by the parent on a live isolated server, the verifier's reproductions: the card with expiry and code is refused ("It looks like a card number"); the picked option cannot back a fact; the user's own typed answer can.
+- L9 (2026-11-23) Native review (RDD) of `99283d3`..`1c8521f` (R7 + R5, 20 files). The user first chose "Omitir esta vez", then interrupted before it was recorded and said (verbatim) "Revisar antes"; the review ran with consent granted. Lenses: risk, reliability. Outcome: one blocking finding, correction required:
+  - R3-replaces-silently-ignored (S8): a correction whose `replaces` matched no fact exactly still answered "Saved for the whole team.", leaving two contradicting facts in use; a paraphrase, a different full stop, a list mark, or an old fact that lived only in the bot's own `USER.md` all missed.
+  - Correction, RED then GREEN (2 new tests failed first; the store test that saved an unmatched correction now expects a refusal; suite 169 tests, 168 pass, 0 fail, 1 skipped; typecheck clean):
+    - `replaces` matches the old fact regardless of case, spaces, accents, quotes, a final full stop or a leading list mark (`samePhrase`).
+    - When it matches nothing, nothing is saved and the bot gets the facts the team keeps, to retry with the exact one.
+    - When it matches an entry in the bot's own `USER.md` (an unverified note), the new fact is saved and that entry is removed.
+  - Checked on a live isolated server: an unmatched correction is refused with the list and changes nothing; a correction copied as "- carol is the user's assistant" replaces "Carol is the user's assistant."; correcting the bot's own "Lives in Paris." saves "Lives in Lisbon." and leaves only "Likes green tea." in its file.

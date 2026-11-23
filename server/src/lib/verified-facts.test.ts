@@ -82,10 +82,35 @@ test('a correction replaces the old fact instead of adding a second one', () => 
   assert.deepEqual(facts.list('u1').map((f) => f.text), ['Lives in Lisbon.']);
 });
 
-test('a correction that names no known fact still saves the new one, and says nothing was replaced', () => {
+// Found by review: an unmatched correction answered "saved" and left two contradicting facts.
+test('a correction that names no known fact is not saved, and lists the facts the team keeps', () => {
   const { facts, say } = setup();
+  say('alice', { role: 'user', text: 'I live in Madrid these days' });
+  facts.save('u1', 'alice', { fact: 'Lives in Madrid.', quote: 'I live in Madrid' });
   say('alice', { role: 'user', text: 'I live in Lisbon now' });
   const r = facts.save('u1', 'alice', { fact: 'Lives in Lisbon.', quote: 'I live in Lisbon now', replaces: 'Lives in Paris.' });
+  assert.equal(r.ok, false);
+  assert.match((r as any).reason, /No fact the team keeps matches/);
+  assert.match((r as any).reason, /Lives in Madrid\./);
+  assert.deepEqual(facts.list('u1').map((f) => f.text), ['Lives in Madrid.']);
+});
+
+test('a correction finds the old fact despite case, spaces, a full stop or a list mark', () => {
+  for (const replaces of ['lives in madrid', '  Lives in Madrid  ', '- Lives in Madrid.', '• lives  in Madrid!']) {
+    const { facts, say } = setup();
+    say('alice', { role: 'user', text: 'I live in Madrid these days' });
+    facts.save('u1', 'alice', { fact: 'Lives in Madrid.', quote: 'I live in Madrid' });
+    say('alice', { role: 'user', text: 'I live in Lisbon now' });
+    const r = facts.save('u1', 'alice', { fact: 'Lives in Lisbon.', quote: 'I live in Lisbon now', replaces });
+    assert.equal(r.ok, true, replaces);
+    assert.deepEqual(facts.list('u1').map((f) => f.text), ['Lives in Lisbon.'], replaces);
+  }
+});
+
+test('a correction may stand alone when the caller says the old fact is not a verified one', () => {
+  const { facts, say } = setup();
+  say('alice', { role: 'user', text: 'I live in Lisbon now' });
+  const r = facts.save('u1', 'alice', { fact: 'Lives in Lisbon.', quote: 'I live in Lisbon now', replaces: 'Lives in Paris.', replacesElsewhere: true });
   assert.equal(r.ok, true);
   assert.equal((r as any).replaced, false);
 });

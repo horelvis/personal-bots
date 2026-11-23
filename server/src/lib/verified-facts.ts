@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type Database from 'better-sqlite3';
-import { checkFact, type UserMessage } from './fact-check.js';
+import { checkFact, samePhrase, type UserMessage } from './fact-check.js';
 import { factHash } from './user-facts.js';
 
 /**
@@ -65,15 +65,30 @@ export function createVerifiedFacts(db: Database.Database) {
     return (db.prepare('SELECT * FROM user_facts WHERE user_id=? AND replaced_by IS NULL ORDER BY created_at, rowid').all(userId) as any[]).map(row);
   }
 
-  /** Keep a fact a bot proposes, if the user's own words back it. `replaces` names a fact it corrects. */
-  function save(userId: string, savedBy: string, input: { fact: string; quote: string; replaces?: string }): SaveResult {
+  /** The fact in use whose text reads the same as `text`, if any. */
+  function findActive(userId: string, text: string): VerifiedFact | null {
+    return list(userId).find((f) => samePhrase(f.text, text)) ?? null;
+  }
+
+  /**
+   * Keep a fact a bot proposes, if the user's own words back it. `replaces` names a fact it corrects:
+   * when no fact in use reads like it, nothing is saved (a correction must not leave two
+   * contradicting facts), unless `replacesElsewhere` says the caller deals with the old one itself.
+   */
+  function save(userId: string, savedBy: string, input: { fact: string; quote: string; replaces?: string; replacesElsewhere?: boolean }): SaveResult {
     const messages = userMessages(userId);
     const check = checkFact(input, messages);
     if (!check.ok) return check;
     const source = messages.find((m) => m.id === check.messageId)!;
     const text = input.fact.trim().slice(0, 1000);
     const hash = factHash(text);
+    const old = (input.replaces ?? '').trim();
     return db.transaction((): SaveResult => {
+      const target = old ? list(userId).find((f) => samePhrase(f.text, old) && f.hash !== hash) ?? null : null;
+      if (old && !target && !input.replacesElsewhere) {
+        const kept = list(userId).map((f) => `- ${f.text}`).join('\n') || '(none yet)';
+        return { ok: false, reason: `No fact the team keeps matches "${old.slice(0, 200)}", so nothing was saved. Facts the team keeps:\n${kept}\nPass the one this corrects as replaces, copied exactly, or leave replaces out if this is not a correction.` };
+      }
       const same = db.prepare('SELECT * FROM user_facts WHERE user_id=? AND hash=? AND replaced_by IS NULL').get(userId, hash) as any;
       let fact: VerifiedFact;
       if (same) fact = row(same);
@@ -83,14 +98,9 @@ export function createVerifiedFacts(db: Database.Database) {
           .run(fact.id, userId, text, hash, fact.quote, fact.sourceText, source.id, source.botId, savedBy, fact.createdAt);
       }
       let replaced = false;
-      const old = (input.replaces ?? '').trim();
-      if (old) {
-        const target = (db.prepare('SELECT id, text FROM user_facts WHERE user_id=? AND replaced_by IS NULL AND id<>?').all(userId, fact.id) as any[])
-          .find((f) => f.text.trim().toLowerCase() === old.toLowerCase());
-        if (target) {
-          db.prepare('UPDATE user_facts SET replaced_by=? WHERE id=?').run(fact.id, target.id);
-          replaced = true;
-        }
+      if (target) {
+        db.prepare('UPDATE user_facts SET replaced_by=? WHERE id=?').run(fact.id, target.id);
+        replaced = true;
       }
       return { ok: true, fact, existed: !!same, replaced };
     })();
@@ -101,5 +111,5 @@ export function createVerifiedFacts(db: Database.Database) {
     return db.prepare('DELETE FROM user_facts WHERE user_id=? AND hash=?').run(userId, hash).changes;
   }
 
-  return { userMessages, list, save, remove };
+  return { userMessages, list, findActive, save, remove };
 }

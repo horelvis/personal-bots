@@ -5,6 +5,7 @@ import { db } from './db.js';
 import { engineHome } from './engine.js';
 import { factHash, factsFor, mergeFacts, withoutFact } from './lib/user-facts.js';
 import { createVerifiedFacts, type VerifiedFact } from './lib/verified-facts.js';
+import { samePhrase } from './lib/fact-check.js';
 import type { Memory } from './types.js';
 
 /**
@@ -75,6 +76,23 @@ export function sharedFactsFor(botId: string): { others: string[]; all: string[]
   ]);
   return factsFor(facts, botId);
 }
+
+/**
+ * Remove from a bot's own `USER.md` the entry that reads like `text` (a correction of a fact the bot
+ * noted on its own). Returns whether one was removed.
+ */
+export function forgetOwnUserEntry(botId: string, text: string): boolean {
+  const file = userFile(botId);
+  if (!file) return false;
+  const { entries } = read(file);
+  const keep = entries.filter((e) => !samePhrase(e, text));
+  if (keep.length === entries.length) return false;
+  fs.writeFileSync(file, keep.join(SEP) + (keep.length ? '\n' : ''));
+  return true;
+}
+
+/** Whether a bot's own `USER.md` holds an entry that reads like `text`. */
+export const ownUserEntryLike = (botId: string, text: string) => ownEntries(botId).entries.some((e) => samePhrase(e, text));
 
 const verifiedMeta = (f: VerifiedFact) => ({ verified: { quote: f.quote, message: f.sourceText } });
 

@@ -16,7 +16,7 @@ import { Cron } from 'croner';
 import { googleTools } from './google-tools.js';
 import { oauthProvider } from '../oauth/registry.js';
 import { composioSource, untrustedBlock } from '../lib/untrusted.js';
-import { verifiedFacts } from '../engine-memory.js';
+import { forgetOwnUserEntry, ownUserEntryLike, verifiedFacts } from '../engine-memory.js';
 
 export interface ToolCtx {
   userId: string;
@@ -328,12 +328,17 @@ export const TOOLS: ToolDef[] = [
     activity: 'remembering',
     label: 'Saving a fact about the user',
     impl: async (a, ctx) => {
-      const r = verifiedFacts.save(ctx.userId, ctx.botId, { fact: String(a.fact ?? ''), quote: String(a.quote ?? ''), replaces: a.replaces ? String(a.replaces) : undefined });
+      const replaces = typeof a.replaces === 'string' && a.replaces.trim() ? a.replaces.trim() : undefined;
+      // The fact being corrected may be one this bot noted on its own, not a verified one.
+      const ownOld = !!replaces && !verifiedFacts.findActive(ctx.userId, replaces) && ownUserEntryLike(ctx.botId, replaces);
+      const r = verifiedFacts.save(ctx.userId, ctx.botId, { fact: String(a.fact ?? ''), quote: String(a.quote ?? ''), replaces, replacesElsewhere: ownOld });
       if (!r.ok) return { output: `Not saved. ${r.reason}`, summary: 'Not saved' };
+      const replacedOwn = ownOld && forgetOwnUserEntry(ctx.botId, replaces!);
       // Every bot of the user knows it now: their memory screens refresh.
       for (const b of db.prepare("SELECT id FROM bots WHERE user_id=? AND COALESCE(kind,'agent')<>'room'").all(ctx.userId) as any[]) hub.emit(ctx.userId, { type: 'memories', botId: b.id });
-      if (r.existed && !r.replaced) return { output: 'The team already knew that.', summary: 'Already known' };
-      return { output: `Saved for the whole team${r.replaced ? ', replacing the earlier fact' : ''}.`, summary: r.replaced ? 'Fact corrected' : 'Fact saved' };
+      const replaced = r.replaced || replacedOwn;
+      if (r.existed && !replaced) return { output: 'The team already knew that.', summary: 'Already known' };
+      return { output: `Saved for the whole team${replaced ? ', replacing the earlier fact' : ''}.`, summary: replaced ? 'Fact corrected' : 'Fact saved' };
     },
   },
   {
