@@ -172,6 +172,21 @@ The server builds the image (`server/box/docker/`) on first use, which takes a f
 - Only the screens and browsers are in the container. The Hermes agents still run on your machine, so their shell commands act on it. The first bot is your existing agent: point its browser at `http://127.0.0.1:9299` in its own Hermes config if you want it to browse on its screen.
 - **Sign in to a subscription** from the Engine panel is not available in this mode (it opens a terminal on the machine the agent runs on).
 
+### Claude Code bots in containers
+
+Set `CLI_SANDBOX=docker` and each turn of a Claude Code bot runs in a fresh container that sees only that bot's folder. The container has no way out except a gate, which reaches the app and the public internet but not your machine, your network or other bots. Your Claude credentials never go into the container: the server keeps your subscription token and adds it to the bot's model requests.
+
+```bash
+claude setup-token                                   # prints a long-lived token for your subscription
+echo 'CLI_SANDBOX=docker' >> .env
+echo 'CLAUDE_CODE_OAUTH_TOKEN=<the token>' >> .env
+```
+
+- The image (`server/box/cli/`) is built when the server starts or on the first turn, in a minute or two. Until it is ready, Claude Code is not offered for a new bot.
+- The containers reach the server through `host.docker.internal`, so the server must listen on an address the Docker host can reach (it listens on all interfaces by default).
+- On macOS, keep `ENGINES_DIR` inside your home folder (the default is), which Colima and Docker Desktop share with their VM.
+- A bot's shell commands get no internet unless they use the proxy settings the container gives them; `git`, `npm` and Claude Code's own web tools do.
+
 The keys you need:
 
 | Key | Used for |

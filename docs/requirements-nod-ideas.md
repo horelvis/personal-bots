@@ -89,6 +89,8 @@ R5, R6 and R7 work together: R7 marks what came from outside, R5 and R6 make sur
 
 ## R8. CLI bots run in a container
 
+**Status (2026-11-23).** Built on branch `feat/cli-container`; see `odd/tasks/cli-container.md`. Turned on with `CLI_SANDBOX=docker`. Decisions: one container per turn, a new image (`server/box/cli`), the user's subscription token held by the server and added by its model proxy, public internet on by default through a gate that refuses non-public addresses.
+
 **Today.** A Claude Code bot runs on the server host as the server's user, in `ENGINES_DIR/<botId>/work` (R1). The approval card is the only barrier (K1); web reads have no card and can reach services that listen only on the host (K3); model credentials in the server's environment reach the CLI (K6).
 
 **Requirement.**
