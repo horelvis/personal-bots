@@ -36,7 +36,7 @@ app.get('/api/health', (c) => c.json({ ok: true, engine: 'hermes' }));
 // The app's tools for the agent engines (MCP).
 app.route('/mcp', mcpApi);
 // The model, for CLI bots that run in a container: the real token is added here (R8).
-app.route('/cli-model', cliModelApi);
+if (env.cliSandbox === 'docker') app.route('/cli-model', cliModelApi);
 app.route('/api/checkins', checkinsApi);
 app.route('/api/rooms', roomsApi);
 app.route('/api', api);

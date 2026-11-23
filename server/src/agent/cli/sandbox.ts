@@ -86,25 +86,35 @@ async function joinGate(botId: string) {
 }
 
 let ready: { at: number; tag: string } | null = null;
+/** One check at a time: two first turns must not both start the gate. */
+let checking: Promise<string> | null = null;
 
-/** Image, networks and gate for one bot's turn. Checked at most every 30 seconds, the bot's network every time. */
-async function ensureFor(botId: string): Promise<string> {
-  if (!ready || Date.now() - ready.at > 30_000 || ready.tag !== imageTag()) {
+async function ensureShared(): Promise<string> {
+  if (ready && Date.now() - ready.at <= 30_000 && ready.tag === imageTag()) return ready.tag;
+  checking ??= (async () => {
     const tag = await ensureImage();
     await ensureNetwork(EGRESS, false);
     await ensureGate(tag);
     ready = { at: Date.now(), tag };
-  }
+    return tag;
+  })().finally(() => { checking = null; });
+  return checking;
+}
+
+/** Image, networks and gate for one bot's turn. Checked at most every 30 seconds, the bot's network every time. */
+async function ensureFor(botId: string): Promise<string> {
+  const tag = await ensureShared();
   await joinGate(botId);
-  return ready.tag;
+  return tag;
 }
 
 function chownTree(dir: string, uid: number) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, entry.name);
-    if (entry.isSymbolicLink()) continue;
-    if (fs.statSync(p).uid !== uid) fs.chownSync(p, uid, uid);
-    if (entry.isDirectory()) chownTree(p, uid);
+    // lstat/lchown never follow a link, even one the bot swaps in between the two calls.
+    const st = fs.lstatSync(p);
+    if (st.uid !== uid) fs.lchownSync(p, uid, uid);
+    if (st.isDirectory()) chownTree(p, uid);
   }
 }
 

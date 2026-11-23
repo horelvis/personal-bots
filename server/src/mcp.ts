@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import os from 'node:os';
-import path from 'node:path';
 import { Hono } from 'hono';
 import { appendRow, emitBot, getBotRow } from './store.js';
 import { connectedServices } from './oauth/connections.js';
@@ -15,6 +14,9 @@ import type { TrustAction } from './lib/trust-check.js';
 import { addMemory } from './engine-memory.js';
 import { toolOutput } from './lib/untrusted.js';
 import { db } from './db.js';
+import { env } from './env.js';
+import { readsInside } from './lib/read-scope.js';
+import { SANDBOX } from './agent/cli/sandbox-plan.js';
 
 /**
  * The app's tools, served to the Hermes engines over MCP (streamable HTTP, JSON answers only).
@@ -66,12 +68,12 @@ async function listTools(botId: string | null) {
 
 /** Whether a CLI file read (Read, Glob, Grep) stays inside the bot's own folder. */
 function readsInsideFolder(botId: string, input: any): boolean {
-  const work = path.resolve(cliHome(botId).work);
   const wanted = [input?.file_path, input?.path, input?.notebook_path, input?.pattern].filter((p) => typeof p === 'string' && p.trim());
-  return wanted.every((p: string) => {
-    const abs = path.resolve(work, p.replace(/^~(?=\/|$)/, os.homedir()));
-    return abs === work || abs.startsWith(work + path.sep);
-  });
+  // In a container the CLI sees its folder at /hq/work (R8).
+  const scope = env.cliSandbox === 'docker'
+    ? { folder: `${SANDBOX.mount}/work`, home: `${SANDBOX.mount}/claude` }
+    : { folder: cliHome(botId).work, home: os.homedir() };
+  return readsInside(wanted, scope);
 }
 
 const UNATTENDED = "This needs the user's approval, and this routine runs while nobody is watching, so it was not done. Say in your report what you would have done, so the user can do it or ask for it.";
