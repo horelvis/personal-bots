@@ -24,6 +24,9 @@ export const humanizeToolkit = (slug: string) => KNOWN[slug.toLowerCase()] ?? sl
 
 // ---------------- approval ----------------
 
+/** Never allowed for good with one click (R6): shell commands, reads and routine changes. Mirrors the server's list. */
+const NEVER_ALWAYS = ['cli_bash', 'cli_read', 'create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins'];
+
 const APPROVAL_OUTCOME: Record<string, string> = { allowed: 'Allowed once', always: 'Always allowed', denied: 'Not allowed', expired: 'Expired' };
 
 export function ApprovalCard({ body }: { body: Card<'approval'> }) {
@@ -46,7 +49,7 @@ export function ApprovalCard({ body }: { body: Card<'approval'> }) {
           <div className="card__actions">
             <button type="button" className="btn btn--secondary" disabled={!!busy} onClick={() => decide('deny')}>Don't allow</button>
             {/* Shell commands and reads are never allowed for good: rules cover them (R6). */}
-            {body.tool !== 'cli_bash' && body.tool !== 'cli_read' && <button type="button" className="btn btn--secondary" disabled={!!busy} onClick={() => decide('always')}>Always allow</button>}
+            {!NEVER_ALWAYS.includes(body.tool) && <button type="button" className="btn btn--secondary" disabled={!!busy} onClick={() => decide('always')}>Always allow</button>}
             <button type="button" className="btn btn--primary" disabled={!!busy} onClick={() => decide('allow')}>Allow</button>
           </div>
           {error && <div className="card__error">{error}</div>}

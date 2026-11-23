@@ -83,7 +83,7 @@ export async function createEventRoutine(userId: string, botId: string, a: { nam
   const triggerId = res?.triggerId ?? res?.trigger_id ?? res?.id;
   if (!triggerId) throw new Error(`Composio did not return a trigger id: ${JSON.stringify(res).slice(0, 200)}`);
   const id = `rt_${Math.random().toString(36).slice(2, 12)}`;
-  db.prepare('INSERT INTO routines(id,bot_id,name,prompt,schedule,timezone,enabled,created_at,trigger_id,trigger_config) VALUES (?,?,?,?,?,?,1,?,?,?)')
+  db.prepare('INSERT INTO routines(id,bot_id,name,prompt,schedule,timezone,enabled,created_at,trigger_id,trigger_config,authorized) VALUES (?,?,?,?,?,?,1,?,?,?,1)')
     .run(id, botId, a.name, a.prompt, `event:${slug}`, 'UTC', now(), triggerId, JSON.stringify(a.config ?? {}));
   await ensureSubscribed();
   return { id, triggerId };

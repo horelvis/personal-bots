@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkPrompt, decide, trustCheck, type TrustAction, type TrustWords } from './trust-check.js';
+import { checkPrompt, decide, readOnlyCommand, trustCheck, type TrustAction, type TrustWords } from './trust-check.js';
 
 const words: TrustWords = {
   messages: ['Email Ana the report please', 'thanks'],
@@ -49,8 +49,41 @@ test('a quote from the rules or the routine counts only there', () => {
 
 test('a read runs without a quote, but an action that changes something never does', () => {
   assert.equal(decide('{"run": true, "because": "read", "source": "read"}', words, ls).run, true);
-  assert.equal(decide('{"run": true, "because": "read", "source": "read"}', words, { ...ls, kind: 'read' }).run, true);
+  assert.equal(decide('{"run": true, "because": "read", "source": "read"}', words, { tool: 'Read', title: 'Files: read', kind: 'read', insideFolder: true, args: { file_path: 'notes.txt' } }).run, true);
   assert.equal(decide('{"run": true, "because": "read", "source": "read"}', words, send).run, false);
+});
+
+const READ = '{"run": true, "because": "read", "source": "read"}';
+const bash = (command: string): TrustAction => ({ tool: 'Bash', title: 'Shell: run a command', kind: 'unknown', args: { command } });
+
+// Found by verification (B4): the model's word "read" let `rm` through.
+test('the model calling a shell command a read is not enough unless the command only reads', () => {
+  for (const c of ['rm -rf build', 'ls; rm x', 'ls && rm x', 'ls > out.txt', 'echo $(rm x)', 'echo `rm x`', 'find . -delete', 'find . -exec rm {} ;', 'git push', 'git checkout .', 'curl https://example.com', 'python3 -c "print(1)"', 'cat a | sh', 'sed -i s/a/b/ f']) {
+    assert.equal(decide(READ, words, bash(c)).run, false, c);
+  }
+  for (const c of ['ls', 'ls -la', 'pwd', 'cat notes.txt', 'head -n 5 notes.txt', 'wc -l notes.txt', 'grep -n todo notes.txt', 'git status', 'git log --oneline -5', 'git diff', 'find . -name "*.md"', 'echo hello']) {
+    assert.equal(decide(READ, words, bash(c)).run, true, c);
+  }
+});
+
+// Found by verification (B5): a read of a secret outside the bot's folder ran without a card.
+test('a read outside the bot folder needs the user words', () => {
+  for (const c of ['cat ~/.ssh/id_rsa', 'cat /etc/passwd', 'cat ../other/secret.txt', 'ls /home', 'head ~/notes', 'grep -r key ..']) {
+    assert.equal(readOnlyCommand(c), false, c);
+  }
+  const outside: TrustAction = { tool: 'Read', title: 'Files: read', kind: 'read', insideFolder: false, args: { file_path: '/home/u/.ssh/id_rsa' } };
+  assert.equal(decide(READ, words, outside).run, false);
+  assert.equal(decide(READ, words, { ...outside, insideFolder: undefined }).run, false);
+  // The user may still ask for it: then the quote decides.
+  const asked: TrustWords = { messages: ['please read /home/u/notes/todo.txt for me'], rules: '' };
+  assert.equal(decide('{"run": true, "because": "please read /home/u/notes/todo.txt", "source": "message:0"}', asked, { ...outside, args: { file_path: '/home/u/notes/todo.txt' } }).run, true);
+});
+
+// Found by verification: a one-letter quote was enough.
+test('a quote too short to mean anything is refused', () => {
+  for (const q of ['e', 'Ana', 'the', 'ok']) {
+    assert.equal(decide(`{"run": true, "because": "${q}", "source": "message:0"}`, words, send).run, false, q);
+  }
 });
 
 test('a refusal from the model means asking, with its reason', () => {

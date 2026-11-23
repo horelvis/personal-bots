@@ -86,8 +86,14 @@ export function permissionStep(tool: string, mode: string | undefined): 'allow' 
   return 'ask';
 }
 
-/** Whether an approval card may offer "Always allow" (not for shell commands or reads, which rules cover). */
-export const alwaysAllowOffered = (key: string) => key !== 'cli_bash' && key !== 'cli_read';
+/**
+ * Keys never allowed for good with one click: shell commands and reads (rules cover them), and
+ * changes to routines, whose instructions later count as the user's words.
+ */
+const NEVER_ALWAYS = new Set(['cli_bash', 'cli_read', 'create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins']);
+
+/** Whether an approval card may offer "Always allow". */
+export const alwaysAllowOffered = (key: string) => !NEVER_ALWAYS.has(key);
 
 /** What the check is told about a CLI tool: a read, a change, or a shell command that may be either. */
 export function actionKind(tool: string): 'read' | 'change' | 'unknown' {

@@ -163,6 +163,9 @@ addColumn('bots', 'engine_port', 'INTEGER');
 addColumn('bots', 'handback_at', 'INTEGER');
 // The user's rules for the action check (R6), in their own words; only the user edits them, in the app's settings.
 addColumn('users', 'trust_rules', 'TEXT');
+// 1 when the routine was set or changed through the action check (R6), so its instruction counts as the
+// user's words in its own turns. Routines from before that stay unauthorized.
+addColumn('routines', 'authorized', 'INTEGER');
 // A CLI engine (bots.engine = an adapter id such as 'claude'): its conversation, as "<generation>:<session id>".
 addColumn('bots', 'engine_session', 'TEXT');
 addColumn('screens', 'width', 'INTEGER');

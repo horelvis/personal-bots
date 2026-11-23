@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { db } from './db.js';
 import { env } from './env.js';
 import { verifiedFacts } from './engine-memory.js';
-import { turnRoutine } from './agent/loop.js';
+import { turnRoutine, turnUnattended } from './agent/loop.js';
 import { trustCheck, type TrustAction, type TrustDecision } from './lib/trust-check.js';
 
 /**
@@ -41,4 +41,4 @@ export async function checkAction(userId: string, botId: string, action: TrustAc
 }
 
 /** A routine's turn runs with nobody watching: an action the check does not clear is reported, not asked. */
-export const unattended = (botId: string) => !!turnRoutine(botId);
+export const unattended = (botId: string) => turnUnattended(botId);

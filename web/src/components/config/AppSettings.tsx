@@ -220,10 +220,12 @@ function RulesCard() {
   );
 }
 
+const NO_LONGER_ALWAYS = ['cli_bash', 'cli_read', 'create_routine', 'create_event_routine', 'update_routine', 'delete_routine', 'set_checkins'];
+
 function PermissionsSection() {
   const [policies, setPolicies] = useState<{ tool: string; mode: string }[] | null>(null);
-  // "Always allow" no longer applies to shell commands and reads (rules cover them), so they are not listed.
-  const load = useCallback(() => { configApi.policies().then((r) => setPolicies(r.policies.filter((p) => p.tool !== 'cli_bash' && p.tool !== 'cli_read'))).catch(() => setPolicies([])); }, []);
+  // "Always allow" no longer applies to shell commands, reads and routine changes (R6), so they are not listed.
+  const load = useCallback(() => { configApi.policies().then((r) => setPolicies(r.policies.filter((p) => !NO_LONGER_ALWAYS.includes(p.tool)))).catch(() => setPolicies([])); }, []);
   useEffect(() => { load(); }, [load]);
   return (
     <>

@@ -17,6 +17,7 @@ import { googleTools } from './google-tools.js';
 import { oauthProvider } from '../oauth/registry.js';
 import { composioSource, untrustedBlock } from '../lib/untrusted.js';
 import { forgetOwnUserEntry, ownUserEntryLike, verifiedFacts } from '../engine-memory.js';
+import { alwaysAllowOffered } from './cli/tools.js';
 
 export interface ToolCtx {
   userId: string;
@@ -151,7 +152,7 @@ export const TOOLS: ToolDef[] = [
     impl: async (a, ctx) => {
       try { new Cron(a.schedule, { paused: true, timezone: a.timezone || 'UTC' }); } catch (e: any) { return { output: `Invalid schedule: ${e.message}` }; }
       const id = newId('rt');
-      db.prepare('INSERT INTO routines(id,bot_id,name,prompt,schedule,timezone,enabled,created_at) VALUES (?,?,?,?,?,?,1,?)').run(id, ctx.botId, a.name, a.prompt, a.schedule, a.timezone || 'UTC', now());
+      db.prepare('INSERT INTO routines(id,bot_id,name,prompt,schedule,timezone,enabled,created_at,authorized) VALUES (?,?,?,?,?,?,1,?,1)').run(id, ctx.botId, a.name, a.prompt, a.schedule, a.timezone || 'UTC', now());
       const r = toRoutine(db.prepare('SELECT * FROM routines WHERE id=?').get(id));
       scheduleRoutine(r);
       appendRow(ctx.botId, 'event', { type: 'event', event: 'routine-created', text: `Routine created: ${a.name} · ${describeCron(a.schedule)}`, ref: id });
@@ -231,7 +232,7 @@ export const TOOLS: ToolDef[] = [
       if (!cur) return { output: 'No such routine.' };
       const next = { ...cur, name: a.name ?? cur.name, prompt: a.prompt ?? cur.prompt, schedule: a.schedule ?? cur.schedule, timezone: a.timezone ?? cur.timezone, enabled: a.enabled === undefined ? cur.enabled : a.enabled ? 1 : 0 };
       try { new Cron(next.schedule, { paused: true, timezone: next.timezone }); } catch (e: any) { return { output: `Invalid schedule: ${e.message}` }; }
-      db.prepare('UPDATE routines SET name=?,prompt=?,schedule=?,timezone=?,enabled=? WHERE id=?').run(next.name, next.prompt, next.schedule, next.timezone, next.enabled, cur.id);
+      db.prepare('UPDATE routines SET name=?,prompt=?,schedule=?,timezone=?,enabled=?,authorized=1 WHERE id=?').run(next.name, next.prompt, next.schedule, next.timezone, next.enabled, cur.id);
       const r = toRoutine(db.prepare('SELECT * FROM routines WHERE id=?').get(cur.id));
       r.enabled ? scheduleRoutine(r) : unscheduleRoutine(r.id);
       appendRow(ctx.botId, 'event', { type: 'event', event: 'routine-updated', text: `Routine updated: ${r.name} · ${r.enabled ? r.description : 'Paused'}`, ref: r.id });
@@ -424,7 +425,9 @@ export function policyFor(userId: string, toolName: string, args: any): { decisi
     // Our own tools that act outside the app follow the same per-tool policy as connected-app writes.
     const p = db.prepare('SELECT mode FROM policies WHERE user_id=? AND tool=?').get(userId, toolName) as any;
     const mode = p?.mode ?? 'needs_approval';
-    return { decision: mode === 'blocked' ? 'block' : mode === 'always_allow' ? 'allow' : 'ask', key: toolName, toolkit: own.approval.toolkit, title: own.approval.title };
+    // A tool that may never be allowed for good (routine changes) asks every time, whatever was saved.
+    const always = mode === 'always_allow' && alwaysAllowOffered(toolName);
+    return { decision: mode === 'blocked' ? 'block' : always ? 'allow' : 'ask', key: toolName, toolkit: own.approval.toolkit, title: own.approval.title };
   }
   if (own) return { decision: 'allow', key: toolName, title: toolName };
   const slugs = innerToolSlugs(toolName, args);

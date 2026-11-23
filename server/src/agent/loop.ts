@@ -171,7 +171,12 @@ interface Turn {
   tools: ToolRef[];
   /** What an app tool said about its own call; beats what we would guess from the raw output. */
   outcomes: Map<number, Outcome>;
-  /** Set when a routine started the turn: its instruction. Such a turn runs unattended. */
+  /** A routine started the turn: nobody is watching it. */
+  unattended: boolean;
+  /**
+   * The routine's own instruction, as stored, when it was set through the action check. Never the
+   * event that fired it (an email, say), which the turn's prompt also carries.
+   */
   routine?: string;
 }
 
@@ -179,8 +184,11 @@ const turns = new Map<string, Turn>();
 
 export const turnDepth = (botId: string) => turns.get(botId)?.depth ?? 0;
 
-/** The instruction of the routine whose turn is running for this bot, if a routine started it. */
+/** The authorized instruction of the routine whose turn is running for this bot, if a routine started it. */
 export const turnRoutine = (botId: string) => turns.get(botId)?.routine;
+
+/** Whether a routine started the turn running for this bot. */
+export const turnUnattended = (botId: string) => turns.get(botId)?.unattended ?? false;
 
 export function markSilent(botId: string) {
   const t = turns.get(botId);
@@ -256,7 +264,7 @@ const pendingApprovals = (botId: string) => db.prepare("SELECT * FROM approvals 
 /** Put an approval card in the conversation and wait for the user's answer. */
 export async function requestApproval(
   who: { userId: string; botId: string },
-  pol: { key: string; toolkit?: string; title: string; detail?: string },
+  pol: { key: string; toolkit?: string; title: string; detail?: string; why?: string },
   args: any,
   rowSeq: number | null,
 ): Promise<ApprovalDecision> {
@@ -265,7 +273,7 @@ export async function requestApproval(
   const tk = pol.toolkit ? await toolkitInfo(pol.toolkit).catch(() => undefined) : undefined;
   const card = appendRow(botId, 'card', {
     type: 'card', card: 'approval', approvalId, title: `Allow ${getBotRow(botId).name} to ${pol.title.split(': ')[1] ?? pol.title}?`,
-    detail: pol.detail ?? describeArgs(args), tool: pol.key, toolkit: pol.toolkit, toolkitName: tk?.name, logo: tk?.logo, args, status: 'pending',
+    detail: [pol.detail ?? describeArgs(args), pol.why ? `Why you are asked: ${pol.why}` : ''].filter(Boolean).join('\n\n'), tool: pol.key, toolkit: pol.toolkit, toolkitName: tk?.name, logo: tk?.logo, args, status: 'pending',
   });
   db.prepare('INSERT INTO approvals(id,bot_id,row_seq,call_id,tool,status,created_at) VALUES (?,?,?,?,?,?,?)').run(approvalId, botId, card.seq, '', pol.key, 'pending', now());
   db.prepare('UPDATE bots SET unread = unread + 1 WHERE id=?').run(botId);
@@ -407,6 +415,12 @@ function captionFrom(reasoning: string): string | null {
 /** Hermes' own tool lookup (it loads rarely used tools on demand). */
 const TOOLBOX = new Set(['tool_search', 'tool_describe']);
 
+/** A routine's stored instruction, if it was set through the action check; otherwise nothing counts as the user's words. */
+function authorizedInstruction(routineId: string): string | undefined {
+  const r = db.prepare('SELECT prompt, authorized FROM routines WHERE id=?').get(routineId) as any;
+  return r?.authorized ? String(r.prompt) : undefined;
+}
+
 async function runTurn(botId: string, trigger: Trigger) {
   const bot = getBotRow(botId);
   if (!bot || bot.kind === 'room') {
@@ -417,7 +431,7 @@ async function runTurn(botId: string, trigger: Trigger) {
   const userId: string = bot.user_id;
   const ctrl = new AbortController();
   aborts.set(botId, ctrl);
-  const turn: Turn = { botId, userId, depth: trigger.type === 'bot' ? trigger.depth : 0, silent: false, tools: [], outcomes: new Map(), ...(trigger.type === 'routine' ? { routine: trigger.prompt } : {}) };
+  const turn: Turn = { botId, userId, depth: trigger.type === 'bot' ? trigger.depth : 0, silent: false, tools: [], outcomes: new Map(), unattended: trigger.type === 'routine', ...(trigger.type === 'routine' ? { routine: authorizedInstruction(trigger.routineId) } : {}) };
   turns.set(botId, turn);
   setLive(botId, { isRunning: true, activity: { kind: 'thinking', since: now() }, awaiting: null, startedAt: now(), caption: null, steps: 0 });
 

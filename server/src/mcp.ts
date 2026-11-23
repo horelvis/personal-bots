@@ -1,9 +1,11 @@
 import crypto from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
 import { Hono } from 'hono';
 import { appendRow, emitBot, getBotRow } from './store.js';
 import { connectedServices } from './oauth/connections.js';
 import { composioTools } from './composio.js';
-import { mcpToken, primaryBotId } from './engine.js';
+import { cliHome, mcpToken, primaryBotId } from './engine.js';
 import { askBot, claimToolRow, enqueueBotMessage, markSilent, noteToolOutcome, requestApproval, toolRowByCallId, turnDepth } from './agent/loop.js';
 import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agent/tools.js';
 import { cliAdapter } from './agent/cli/index.js';
@@ -62,6 +64,16 @@ async function listTools(botId: string | null) {
   return [...own, ...apps];
 }
 
+/** Whether a CLI file read (Read, Glob, Grep) stays inside the bot's own folder. */
+function readsInsideFolder(botId: string, input: any): boolean {
+  const work = path.resolve(cliHome(botId).work);
+  const wanted = [input?.file_path, input?.path, input?.notebook_path, input?.pattern].filter((p) => typeof p === 'string' && p.trim());
+  return wanted.every((p: string) => {
+    const abs = path.resolve(work, p.replace(/^~(?=\/|$)/, os.homedir()));
+    return abs === work || abs.startsWith(work + path.sep);
+  });
+}
+
 const UNATTENDED = "This needs the user's approval, and this routine runs while nobody is watching, so it was not done. Say in your report what you would have done, so the user can do it or ask for it.";
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
@@ -89,8 +101,7 @@ async function gate(
     emitBot(botId);
     return 'unattended';
   }
-  const detail = [card.detail, `Why you are asked: ${verdict.reason}`].filter(Boolean).join('\n\n');
-  const answer = await requestApproval({ userId, botId }, { ...card, detail }, args, rowSeq);
+  const answer = await requestApproval({ userId, botId }, { ...card, why: verdict.reason }, args, rowSeq);
   return answer === 'allow' ? 'allow' : answer === 'deny' ? 'deny' : 'skip';
 }
 
@@ -117,7 +128,8 @@ async function answerPermission(userId: string, botId: string, args: any): Promi
       noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Too long to show for approval' });
       return text(permissionAnswer('deny', input, 'This is too long to show the user for approval, so it was not run. Do it in shorter steps (for a long script, write it to a file first, then run the file).'));
     }
-    const answer = await gate({ userId, botId, rowSeq }, { tool, title: rule.title, kind: actionKind(tool), args: input ?? {} }, rule, input ?? {});
+    const kind = actionKind(tool);
+    const answer = await gate({ userId, botId, rowSeq }, { tool, title: rule.title, kind, args: input ?? {}, ...(kind === 'read' ? { insideFolder: readsInsideFolder(botId, input) } : {}) }, rule, input ?? {});
     if (answer === 'allow') return text(permissionAnswer('allow', input));
     return text(permissionAnswer('deny', input, answer === 'deny' ? DECLINED : answer === 'unattended' ? UNATTENDED : SKIPPED));
   } catch (e: any) {
@@ -156,6 +168,11 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
         const answer = await gate({ userId, botId, rowSeq }, { tool: name, title: pol.title, kind: 'change', args }, { ...pol, detail }, args);
         if (answer !== 'allow') return text(answer === 'deny' ? DECLINED : answer === 'unattended' ? UNATTENDED : SKIPPED);
       }
+    }
+    if (name === MEMORY_TOOL && cliAdapter(bot.engine) && args?.about === 'self') {
+      // A note of the bot's own is a change to its memory (R6): checked like any other change.
+      const answer = await gate({ userId, botId, rowSeq }, { tool: name, title: 'Memory: save a note', kind: 'change', args }, { key: 'memory_note', title: 'Memory: save a note', detail: String(args?.text ?? '').slice(0, 1500) }, args);
+      if (answer !== 'allow') return text(answer === 'deny' ? DECLINED : answer === 'unattended' ? UNATTENDED : SKIPPED);
     }
     if (name === MEMORY_TOOL && cliAdapter(bot.engine)) {
       // Facts about the user go through remember_about_user, which checks the user said them.
