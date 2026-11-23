@@ -84,7 +84,12 @@ test('allowed commands with flags that write, run programs or leave the folder a
   for (const c of ['rg --pre=rm x .', 'rg --pre rm x .', 'rg --pre-glob "*" x .', 'cat {/etc,x}/passwd', 'cat {..,.}/{..,.}/secret', 'tree -o notes.md', 'file -C -m x', 'date -s 2020-01-01', 'tail -f log.txt', 'tail -F log.txt', 'tail --follow log.txt', 'tail -nf 5 log.txt']) {
     assert.equal(readOnlyCommand(c), false, c);
   }
+  // Found by the second recheck: quotes inside a word are joined by the shell into the real flag or path.
+  for (const c of ["find . -dele''te", 'find . -de""lete', "rg --p''re=rm x .", 'rg --pre""=rm x .', "git diff --out''put=written.txt", "ls ..''/", "cat ''/etc/passwd"]) {
+    assert.equal(readOnlyCommand(c), false, c);
+  }
   for (const c of ['rg todo .', 'tail -n 5 log.txt', 'date']) assert.equal(readOnlyCommand(c), true, c);
+  for (const c of ['grep "to do" notes.txt', "find . -name '*.md'"]) assert.equal(readOnlyCommand(c), true, c);
 });
 
 // Found by verification: a one-letter quote was enough.

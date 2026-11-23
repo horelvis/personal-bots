@@ -83,6 +83,8 @@ export function readOnlyCommand(command: string): boolean {
   const cmd = command.trim();
   // Braces are expanded by the shell into paths no check below would see, e.g. {/etc,x}/passwd.
   if (!cmd || /[;&|<>`$\\\n\r{}]/.test(cmd)) return false;
+  // Every word is either fully quoted or has no quotes: the shell joins -dele''te into -delete, which no check below would see.
+  if (!/^(?:(?:"[^"]*"|'[^']*'|[^\s'"]+)(?:\s+|$))+$/.test(cmd)) return false;
   const tokens = cmd.match(/"[^"]*"|'[^']*'|\S+/g)?.map((t) => t.replace(/^["']|["']$/g, '')) ?? [];
   const [bin, sub] = tokens;
   if (!READERS.has(bin)) return false;
