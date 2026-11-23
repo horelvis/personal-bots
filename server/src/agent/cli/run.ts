@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import readline from 'node:readline';
-import type { CliAdapter, CliEvent, TurnOptions } from './adapter.js';
+import type { CliAdapter, CliEvent, CliRunner, PreparedProcess, TurnOptions } from './adapter.js';
 
 /**
  * Run one turn of a CLI engine and yield what it says, in order.
@@ -9,20 +9,30 @@ import type { CliAdapter, CliEvent, TurnOptions } from './adapter.js';
  * Ends after the CLI's own result. A CLI that dies without one is an error carrying what it wrote
  * to stderr. Aborting stops the process and throws, like an aborted request to a Hermes engine.
  */
-export async function* runCli(adapter: CliAdapter, opts: TurnOptions, signal: AbortSignal): AsyncGenerator<CliEvent> {
+/** The CLI on this host, as the server's user. */
+export const hostRunner: CliRunner = {
+  async prepare(adapter, opts) {
+    const { args, files, stdin } = adapter.command(opts);
+    const env = {
+      ...adapter.environment(process.env),
+      // The bot's folder may sit inside a repository (ours, by default). Without this, read-only git
+      // commands run from there would read that whole repository without asking.
+      GIT_CEILING_DIRECTORIES: opts.home,
+    };
+    return { bin: adapter.bin, args, cwd: opts.cwd, env, files, stdin };
+  },
+};
+
+export async function* runCli(adapter: CliAdapter, opts: TurnOptions, signal: AbortSignal, runner: CliRunner = hostRunner): AsyncGenerator<CliEvent> {
   if (signal.aborted) throw new Error('interrupted');
-  const { args, files, stdin } = adapter.command(opts);
-  for (const f of files) {
+  const p: PreparedProcess = await runner.prepare(adapter, opts);
+  if (signal.aborted) throw new Error('interrupted');
+  for (const f of p.files) {
     fs.writeFileSync(f.path, f.content, { mode: 0o600 });
     fs.chmodSync(f.path, 0o600); // the mode above only applies to a new file
   }
-  const env = {
-    ...adapter.environment(process.env),
-    // The bot's folder may sit inside a repository (ours, by default). Without this, read-only git
-    // commands run from there would read that whole repository without asking.
-    GIT_CEILING_DIRECTORIES: opts.home,
-  };
-  const child = spawn(adapter.bin, args, { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const { stdin } = p;
+  const child = spawn(p.bin, p.args, { cwd: p.cwd, env: p.env, stdio: ['pipe', 'pipe', 'pipe'] });
   // The prompt goes in through stdin, then stdin closes so the CLI does not wait for more.
   child.stdin.on('error', () => {}); // the CLI may exit before reading it
   child.stdin.end(stdin);
@@ -34,7 +44,9 @@ export async function* runCli(adapter: CliAdapter, opts: TurnOptions, signal: Ab
     child.on('error', (e) => { spawnError = e; resolve(null); });
     child.on('close', (code) => resolve(code));
   });
+  let stopped = false;
   const stop = () => {
+    if (!stopped) { stopped = true; try { p.stop?.(); } catch { /* best effort */ } }
     child.kill('SIGTERM');
     setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 3000).unref();
   };
@@ -55,7 +67,7 @@ export async function* runCli(adapter: CliAdapter, opts: TurnOptions, signal: Ab
     if (signal.aborted) throw new Error('interrupted');
     if (spawnError) {
       const missing = (spawnError as NodeJS.ErrnoException).code === 'ENOENT';
-      yield { type: 'error', message: missing ? `${adapter.name} is not installed on this machine (${adapter.bin} was not found).` : `${adapter.name} could not start: ${(spawnError as Error).message}` };
+      yield { type: 'error', message: missing ? `${adapter.name} is not installed on this machine (${p.bin} was not found).` : `${adapter.name} could not start: ${(spawnError as Error).message}` };
     } else if (!finished) {
       yield { type: 'error', message: stderr.trim().split('\n').pop()?.slice(0, 300) || `${adapter.name} stopped without an answer (exit code ${code}).` };
     }

@@ -10,6 +10,7 @@ import { env } from '../env.js';
 import { instructionsFor } from './prompt.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
 import { cliAdapter, runCli, type CliAdapter } from './cli/index.js';
+import { sandboxRunner } from './cli/sandbox.js';
 import { PERMISSION_TOOL, alwaysAllowOffered, cliActivity } from './cli/tools.js';
 import { afterAnswer, createAsks, type Answer } from './asks.js';
 import { beginWithRetry, createTurnStore, shareWait } from './turn-store.js';
@@ -486,6 +487,7 @@ async function runTurn(botId: string, trigger: Trigger) {
     let streamed = false;
     const { home, work } = cliHome(botId);
     const events = runCli(cli, {
+      botId,
       home,
       cwd: work,
       prompt: triggerText(trigger),
@@ -496,7 +498,7 @@ async function runTurn(botId: string, trigger: Trigger) {
       effort: bot.effort ?? null,
       mcp: { url: `${env.mcpBaseUrl}/mcp/${botId}`, token: mcpToken(botId) },
       permissionTool: PERMISSION_TOOL,
-    }, ctrl.signal);
+    }, ctrl.signal, env.cliSandbox === 'docker' ? sandboxRunner : undefined);
 
     for await (const ev of events) {
       switch (ev.type) {

@@ -28,10 +28,10 @@ const IMAGE_DIR = fileURLToPath(new URL('../box/docker/', import.meta.url));
 const first = BOX_DISPLAYS[0];
 const last = BOX_DISPLAYS[BOX_DISPLAYS.length - 1];
 
-interface Out { code: number; stdout: Buffer; stderr: string }
+export interface Out { code: number; stdout: Buffer; stderr: string }
 
 /** One docker CLI call. Never rejects: a missing binary or a timeout comes back as a non-zero code. */
-function docker(args: string[], opts: { input?: Buffer; timeoutMs?: number } = {}): Promise<Out> {
+export function docker(args: string[], opts: { input?: Buffer; timeoutMs?: number } = {}): Promise<Out> {
   return new Promise((resolve) => {
     const child = spawn(env.dockerBin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     const out: Buffer[] = [];

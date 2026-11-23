@@ -90,3 +90,20 @@ test('git cannot look for a repository above the bot home', async () => {
   const script = `console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: String(process.env.GIT_CEILING_DIRECTORIES) }] } }));` + say({ type: 'result', subtype: 'success', is_error: false });
   assert.deepEqual(await collect(fake(script)), [{ type: 'text', text: os.tmpdir() }, { type: 'done' }]);
 });
+
+// R8: a turn that runs elsewhere (a container) is stopped through the runner, not only by signalling the local client.
+test('a runner prepares the process and is told to stop it when the turn is aborted', async () => {
+  const stops: string[] = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-runner-'));
+  const runner = {
+    async prepare() {
+      return { bin: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], env: { PATH: process.env.PATH ?? '' }, files: [{ path: path.join(dir, 'f.txt'), content: 'x' }], stdin: '', stop: () => { stops.push('stopped'); } };
+    },
+  };
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), 300);
+  await assert.rejects(async () => { for await (const _ of runCli(fake(''), { ...opts, home: dir, cwd: dir }, ctrl.signal, runner)) { /* nothing */ } }, /interrupted/);
+  assert.deepEqual(stops, ['stopped']);
+  assert.equal(fs.readFileSync(path.join(dir, 'f.txt'), 'utf8'), 'x');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -20,6 +20,7 @@ import { configApi } from './routes-config.js';
 import { startIdleWatcher } from './idle.js';
 import { mcpApi } from './mcp.js';
 import { cliModelApi } from './cli-model.js';
+import { ensureImage, removeStaleTurns } from './agent/cli/sandbox.js';
 import { initEngines } from './engine.js';
 import { TOOLS } from './agent/tools.js';
 import { toolsStamp } from './agent/apps-guidance.js';
@@ -58,6 +59,8 @@ const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
   if (process.env.GROKBOT_NO_SCHEDULER !== '1') {
     // First the turns the last stop cut off, so they keep their place ahead of anything queued from now on.
     // A failure there must not keep the routines, triggers and check-ins from starting.
+    // CLI bots in containers: turn containers left from before the restart are removed, and the image is built ahead of the first turn.
+    if (env.cliSandbox === 'docker') void removeStaleTurns().then(() => ensureImage()).catch((e) => console.error('[cli] container setup failed:', e?.message ?? e));
     try { recoverTurns(); } catch (e: any) { console.error('[agent] could not pick up the turns from before the restart:', e?.message ?? e); }
     initRoutines(enqueue);
     void initTriggers(enqueue);

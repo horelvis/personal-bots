@@ -8,7 +8,12 @@ import { cdpUrlFor, screenFor } from './computer.js';
 import { db } from './db.js';
 import { env } from './env.js';
 import type { EngineChoice, EngineInfo, EngineProvider } from './types.js';
-import { CLI_ADAPTERS, cliAdapter, cliVersion } from './agent/cli/index.js';
+import { CLI_ADAPTERS, cliAdapter, cliVersion as hostCliVersion } from './agent/cli/index.js';
+import { removeBotSandbox, sandboxVersion } from './agent/cli/sandbox.js';
+import type { CliAdapter } from './agent/cli/adapter.js';
+
+/** A CLI engine's version where its turns run: in the container image (R8), or on this host. */
+const cliVersion = (a: CliAdapter): string | null => (env.cliSandbox === 'docker' ? sandboxVersion() : hostCliVersion(a));
 
 /**
  * Every bot is run by a Hermes agent.
@@ -423,7 +428,7 @@ export function cliHome(botId: string): { home: string; work: string } {
 export function useCliEngine(botId: string, engine: string) {
   const adapter = cliAdapter(engine);
   if (!adapter) throw new Error(`Unknown engine "${engine}".`);
-  if (cliVersion(adapter) === null) throw new Error(`${adapter.name} is not installed on this machine.`);
+  if (cliVersion(adapter) === null) throw new Error(env.cliSandbox === 'docker' ? `${adapter.name} is not ready yet: its container image is being built. Try again in a minute.` : `${adapter.name} is not installed on this machine.`);
   db.prepare('UPDATE bots SET engine=?, engine_port=NULL, engine_session=NULL WHERE id=?').run(adapter.id, botId);
   cliHome(botId);
 }
@@ -504,6 +509,7 @@ export async function removeEngine(botId: string): Promise<void> {
   keys.delete(botId);
   failures.delete(botId);
   optionsCache.delete(botId);
+  if (env.cliSandbox === 'docker') await removeBotSandbox(botId).catch(() => {});
   if (path.resolve(home).startsWith(path.resolve(env.enginesDir) + path.sep)) fs.rmSync(home, { recursive: true, force: true });
 }
 

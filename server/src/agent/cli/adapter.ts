@@ -7,6 +7,8 @@
  */
 
 export interface TurnOptions {
+  /** The bot the turn is for; needed when the turn runs in a container (sandbox.ts). */
+  botId?: string;
   /** The bot's private folder, beside its work folder: files only this bot's engine may read go here. */
   home: string;
   /** The bot's own folder; the CLI works there. */
@@ -23,6 +25,24 @@ export interface TurnOptions {
   mcp: { url: string; token: string };
   /** The app tool that answers the CLI's permission prompts (name without the server prefix). */
   permissionTool: string;
+}
+
+/** What a turn's process is, once prepared: the host runs the CLI itself; a sandbox runs `docker run`. */
+export interface PreparedProcess {
+  bin: string;
+  args: string[];
+  cwd?: string;
+  env: Record<string, string>;
+  /** Written before the process starts, readable by the owner only. */
+  files: { path: string; content: string }[];
+  stdin: string;
+  /** Stops what the process started elsewhere (a container), besides the local process itself. */
+  stop?: () => void;
+}
+
+/** Prepares a turn's process; the default runs the CLI on this host. */
+export interface CliRunner {
+  prepare(adapter: CliAdapter, opts: TurnOptions): Promise<PreparedProcess>;
 }
 
 export type CliEvent =
