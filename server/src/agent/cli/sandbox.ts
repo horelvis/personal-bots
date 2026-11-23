@@ -7,7 +7,7 @@ import { env } from '../../env.js';
 import { docker } from '../../dockerbox.js';
 import { placeholderToken } from '../../lib/model-proxy.js';
 import type { CliRunner } from './adapter.js';
-import { botNetwork, sandboxPlan, SANDBOX, turnContainerName } from './sandbox-plan.js';
+import { botNetwork, botNetworkCreateArgs, NO_HOST_ADDRESS, sandboxPlan, SANDBOX, turnContainerName } from './sandbox-plan.js';
 
 /**
  * CLI bots in containers (R8, CLI_SANDBOX=docker). Each turn is a fresh `docker run --rm` of the
@@ -43,9 +43,9 @@ export function ensureImage(): Promise<string> {
   return building;
 }
 
-async function ensureNetwork(name: string, internal: boolean) {
+async function ensureNetwork(name: string) {
   if ((await docker(['network', 'inspect', name])).code === 0) return;
-  const made = await docker(['network', 'create', ...(internal ? ['--internal'] : []), '--label', 'hq.cli=1', name]);
+  const made = await docker(['network', 'create', '--label', 'hq.cli=1', name]);
   if (made.code !== 0 && !/already exists/i.test(made.stderr)) throw new Error(`Could not create network ${name}: ${lastLine(made.stderr)}`);
 }
 
@@ -77,9 +77,23 @@ async function ensureGate(tag: string) {
   }
 }
 
+async function ensureBotNetwork(botId: string) {
+  const net = botNetwork(botId);
+  const info = await docker(['network', 'inspect', '-f', `{{index .Options "${NO_HOST_ADDRESS}"}}`, net]);
+  if (info.code === 0 && info.stdout.toString().trim() === 'true') return;
+  if (info.code === 0) {
+    // Made before the host address was taken away: replace it (only the gate is on it between turns).
+    await docker(['network', 'disconnect', '-f', net, GATE]);
+    const removed = await docker(['network', 'rm', net]);
+    if (removed.code !== 0) throw new Error(`Could not replace network ${net}: ${lastLine(removed.stderr)}`);
+  }
+  const made = await docker(botNetworkCreateArgs(botId));
+  if (made.code !== 0 && !/already exists/i.test(made.stderr)) throw new Error(`Could not create network ${net}: ${lastLine(made.stderr)}`);
+}
+
 async function joinGate(botId: string) {
   const net = botNetwork(botId);
-  await ensureNetwork(net, true);
+  await ensureBotNetwork(botId);
   const joined = await docker(['network', 'connect', '--alias', SANDBOX.gateAlias, net, GATE]);
   if (joined.code !== 0 && !/already exists|already attached|endpoint with name/i.test(joined.stderr)) {
     throw new Error(`Could not connect the CLI gate to ${net}: ${lastLine(joined.stderr)}`);
@@ -94,7 +108,7 @@ async function ensureShared(): Promise<string> {
   if (ready && Date.now() - ready.at <= 30_000 && ready.tag === imageTag()) return ready.tag;
   checking ??= (async () => {
     const tag = await ensureImage();
-    await ensureNetwork(EGRESS, false);
+    await ensureNetwork(EGRESS);
     await ensureGate(tag);
     ready = { at: Date.now(), tag };
     return tag;

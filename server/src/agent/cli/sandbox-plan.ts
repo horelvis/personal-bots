@@ -56,6 +56,14 @@ export function turnContainerName(botId: string): string {
 
 export const botNetwork = (botId: string) => `${SANDBOX.networkPrefix}${safe(botId)}`;
 
+/** Docker gives the host no address on this bridge, so a turn cannot reach host services through the gateway (on Linux an internal network alone still allows that). */
+export const NO_HOST_ADDRESS = 'com.docker.network.bridge.inhibit_ipv4';
+
+/** The bot's own network: internal (no route out) and with no host address on it; only the gate joins it. */
+export function botNetworkCreateArgs(botId: string): string[] {
+  return ['network', 'create', '--internal', '-o', `${NO_HOST_ADDRESS}=true`, '--label', 'hq.cli=1', botNetwork(botId)];
+}
+
 export function sandboxPlan(adapter: CliAdapter, opts: TurnOptions, o: SandboxOptions): SandboxPlan {
   if (!opts.botId) throw new Error('A sandboxed turn needs the bot id.');
   const hostHome = opts.home;

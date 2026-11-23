@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { claude } from './claude.js';
-import { sandboxPlan, SANDBOX, turnContainerName } from './sandbox-plan.js';
+import { botNetworkCreateArgs, sandboxPlan, SANDBOX, turnContainerName } from './sandbox-plan.js';
 import type { TurnOptions } from './adapter.js';
 
 const opts: TurnOptions = {
@@ -91,4 +91,15 @@ test('turn container names are valid docker names, unique and tied to the bot', 
   assert.notEqual(a, b);
   assert.match(a, /^hq-cli-bot_a1-[0-9a-f]{8}$/);
   assert.match(turnContainerName('we!rd id'), /^hq-cli-we-rd-id-[0-9a-f]{8}$/);
+});
+
+// Found after review (R8.2): on Linux a container on an --internal network still reached host services
+// listening on all interfaces through the network's gateway address. The host must have no address there.
+test('a bot network is internal and gives the host no address on it', () => {
+  assert.deepEqual(botNetworkCreateArgs('bot_a1'), [
+    'network', 'create', '--internal',
+    '-o', 'com.docker.network.bridge.inhibit_ipv4=true',
+    '--label', 'hq.cli=1',
+    'hq-cli-net-bot_a1',
+  ]);
 });
