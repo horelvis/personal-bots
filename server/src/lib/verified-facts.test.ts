@@ -148,3 +148,13 @@ test('a fact keeps a link to the exact message it came from', () => {
   const stored = db.prepare('SELECT source_message FROM user_facts').get() as any;
   assert.match(stored.source_message, /^alice:1:\d+$/);
 });
+
+// Found by review: the source message is kept with the fact and shown on the memory screen.
+test('a secret in the source message is hidden in what is kept', () => {
+  const { facts, say } = setup();
+  say('alice', { role: 'user', text: 'my card is 4111 1111 1111 1111 and Carol is my assistant now' });
+  const r = facts.save('u1', 'alice', { fact: "Carol is the user's assistant.", quote: 'Carol is my assistant now' });
+  assert.equal(r.ok, true);
+  const [f] = facts.list('u1');
+  assert.equal(f.sourceText, 'my card is [card number hidden] and Carol is my assistant now');
+});

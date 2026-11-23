@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkFact, findQuote, secretIn } from './fact-check.js';
+import { checkFact, findQuote, hideSecrets, secretIn } from './fact-check.js';
 
 // Newest first, as the server reads them.
 const said = [
@@ -99,4 +99,19 @@ test('more kinds of secrets are recognised', () => {
 test('ordinary words about passwords or keys are not secrets', () => {
   assert.equal(secretIn('I forgot my password again'), null);
   assert.equal(secretIn('the key to the office is with Ana'), null);
+});
+
+// Found by review: the message a fact comes from is kept and shown, so a secret in it must not be.
+test('secrets in a message are hidden, the rest is kept', () => {
+  assert.equal(hideSecrets('my card is 4111 1111 1111 1111 12/26 and Carol is my assistant now'), 'my card is [card number hidden] 12/26 and Carol is my assistant now');
+  assert.equal(hideSecrets('key sk-proj-AbC123dEf456GhI789jKl012 for the bot'), 'key [key hidden] for the bot');
+  assert.equal(hideSecrets('the password is hunter2, thanks'), 'the password is [hidden], thanks');
+  assert.equal(hideSecrets('log in at https://app.example.com/login?token=abc123 today'), 'log in at [login link hidden] today');
+  assert.equal(hideSecrets('api_key=abcd1234efgh please'), 'api_key=[hidden] please');
+  assert.equal(secretIn(hideSecrets('my card is 4111 1111 1111 1111 12/26 123 and more')), null);
+});
+
+test('a message without secrets is left as it is', () => {
+  const text = 'Carol is my assistant now, ref 1234 5678 9012 3456, see https://example.com/blog?page=2';
+  assert.equal(hideSecrets(text), text);
 });

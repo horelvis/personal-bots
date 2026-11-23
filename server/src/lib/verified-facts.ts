@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type Database from 'better-sqlite3';
-import { checkFact, samePhrase, type UserMessage } from './fact-check.js';
+import { checkFact, hideSecrets, samePhrase, type UserMessage } from './fact-check.js';
 import { factHash } from './user-facts.js';
 
 /**
@@ -31,7 +31,7 @@ export interface VerifiedFact {
   /** Same as lib/user-facts `factHash`, so a fact and a bot's own entry with the same text match. */
   hash: string;
   quote: string;
-  /** The user's message the quote came from (as it was when the fact was saved). */
+  /** The user's message the quote came from, as it was when the fact was saved, with any secret in it hidden. */
   sourceText: string;
   createdAt: number;
 }
@@ -93,7 +93,7 @@ export function createVerifiedFacts(db: Database.Database) {
       let fact: VerifiedFact;
       if (same) fact = row(same);
       else {
-        fact = { id: `fact_${crypto.randomBytes(9).toString('base64url')}`, text, hash, quote: check.quote, sourceText: source.text.slice(0, 1000), createdAt: Date.now() };
+        fact = { id: `fact_${crypto.randomBytes(9).toString('base64url')}`, text, hash, quote: check.quote, sourceText: hideSecrets(source.text).slice(0, 1000), createdAt: Date.now() };
         db.prepare('INSERT INTO user_facts(id,user_id,text,hash,quote,source_text,source_message,source_bot_id,saved_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
           .run(fact.id, userId, text, hash, fact.quote, fact.sourceText, source.id, source.botId, savedBy, fact.createdAt);
       }

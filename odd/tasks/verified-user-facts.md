@@ -29,6 +29,7 @@ Branch: `feat/verified-user-facts`, stacked on `feat/untrusted-results` (R7, `a7
 All four are in one commit, the one that adds this line.
 - [x] T5 (S5,S6,S7) inline: correction after independent verification (L7, L8). Commit: the one that adds this line. Risk: item 1.
 - [x] T6 (S8) inline: correction asked by the native review (L9). Commit: the one that adds this line. Risk: item 1.
+- [x] T7 (S7) inline: secrets in the kept source message are hidden (L11). Commit: the one that adds this line.
 
 Route: inline (one behavior; each task builds on the one before).
 
@@ -70,3 +71,4 @@ Route: inline (one behavior; each task builds on the one before).
   - The source message stored with a fact is not checked for secrets: a card number in the same message as the quoted words is kept in `source_text` and shown on the memory screen.
   - A quote can start or end inside a word ("art is my" inside "Bart is my"); the card check misses groups split by tabs, newlines, slashes or three spaces; "my password is too long to remember" is refused as a secret; the card scan is not bounded before the 1000-character cut.
   - A correction leaves the same old text in other bots' own `USER.md` (shown there as "Only <bot>"); a CLI `remember` about "user" returns an error without closing its tool row; the `choice` flag route and the memory wiring have no automated test.
+- L11 (2026-11-23) Offered: fix the review finding about secrets in the source message first, or go to R6. User (verbatim): "Arregla eso primero". Done, RED then GREEN (3 new tests failed first; suite 172 tests, 171 pass, 0 fail, 1 skipped; typecheck clean). The fact is still saved when the user's own words back it, but the source message kept with it and shown on the memory screen has every secret `secretIn` finds replaced by a placeholder (`hideSecrets`, built on the same patterns, which were reorganised without changing what they find: all earlier secret tests still pass). Checked on a live isolated server: from "my card is 4111 1111 1111 1111 12/26 and Carol is my assistant now", the fact was saved, the memory screen and the stored row show "my card is [card number hidden] 12/26 and ...", and no stored column holds the card digits. The user's chat message itself is unchanged (it is the conversation).

@@ -54,34 +54,60 @@ function luhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
+/** Runs of digits written in groups ("4111 1111 1111 1111", "4111-1111-..."). */
+const DIGIT_RUN = /\d+(?:[ .-]{1,2}\d+)*/g;
+
 /**
- * A card number inside a run of digits written in groups ("4111 1111 1111 1111", "4111-1111-..."),
- * even when more digits follow (an expiry date, a code). A card starts and ends where a group does.
+ * Where a card number sits inside a run of grouped digits, even when more digits follow (an expiry
+ * date, a code): the character span of the first card found, or null. A card starts and ends where
+ * a group does.
  */
-function hasCardNumber(text: string): boolean {
-  for (const m of text.matchAll(/\d+(?:[ .-]{1,2}\d+)*/g)) {
-    const groups = m[0].split(/[ .-]+/);
-    const digits = groups.join('');
-    const bounds = [0];
-    for (const g of groups) bounds.push(bounds[bounds.length - 1] + g.length);
-    for (const start of bounds) {
-      for (const end of bounds) {
-        const len = end - start;
-        if (len >= 13 && len <= 19 && luhn(digits.slice(start, end))) return true;
-      }
+function cardSpan(run: string): [number, number] | null {
+  const groups = [...run.matchAll(/\d+/g)].map((g) => ({ at: g.index!, end: g.index! + g[0].length, digits: g[0] }));
+  const digits = groups.map((g) => g.digits).join('');
+  const bounds = [0];
+  for (const g of groups) bounds.push(bounds[bounds.length - 1] + g.digits.length);
+  for (let i = 0; i < groups.length; i++) {
+    for (let j = i + 1; j <= groups.length; j++) {
+      const len = bounds[j] - bounds[i];
+      if (len >= 13 && len <= 19 && luhn(digits.slice(bounds[i], bounds[j]))) return [groups[i].at, groups[j - 1].end];
     }
   }
-  return false;
+  return null;
 }
+
+const KEY = /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}|\b[spr]k_(?:live|test)_[A-Za-z0-9]{10,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/-]{16,}/g;
+const PASSWORD = /(\b(?:password|passwd|pwd|contrase[nñ]a|clave)\s*(?:[:=]|is\b|es\b)\s*)([^\s,;]+)/gi;
+const LOGIN_LINK = /https?:\/\/\S*[?&](?:token|code|otp|key|auth|access_token|magic|signature|sig)=\S*/gi;
+const ASSIGNED = /(\b(?:api[_-]?key|secret|token|access[_-]?key)\s*[:=]\s*)(\S{6,})/gi;
 
 /** What kind of secret the text seems to hold, or null. */
 export function secretIn(text: string): string | null {
-  if (hasCardNumber(text)) return 'a card number';
-  if (/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}|\b[spr]k_(?:live|test)_[A-Za-z0-9]{10,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/-]{16,}/.test(text)) return 'a key or password';
-  if (/\b(?:password|passwd|pwd|contrase[nñ]a|clave)\s*(?:[:=]|is\b|es\b)\s*\S+/i.test(text)) return 'a key or password';
-  if (/https?:\/\/\S*[?&](?:token|code|otp|key|auth|access_token|magic|signature|sig)=/i.test(text)) return 'a login link';
-  if (/\b(?:api[_-]?key|secret|token|access[_-]?key)\s*[:=]\s*\S{6,}/i.test(text)) return 'a key or password';
+  for (const m of text.matchAll(DIGIT_RUN)) if (cardSpan(m[0])) return 'a card number';
+  const has = (re: RegExp) => { re.lastIndex = 0; const hit = re.test(text); re.lastIndex = 0; return hit; };
+  if (has(KEY)) return 'a key or password';
+  if (has(PASSWORD)) return 'a key or password';
+  if (has(LOGIN_LINK)) return 'a login link';
+  if (has(ASSIGNED)) return 'a key or password';
   return null;
+}
+
+/** The text with every secret `secretIn` would find replaced by a short placeholder; the rest is kept. */
+export function hideSecrets(text: string): string {
+  let out = text.replace(DIGIT_RUN, (run) => {
+    let rest = run;
+    let done = '';
+    for (let span = cardSpan(rest); span; span = cardSpan(rest)) {
+      done += `${rest.slice(0, span[0])}[card number hidden]`;
+      rest = rest.slice(span[1]);
+    }
+    return done + rest;
+  });
+  out = out.replace(LOGIN_LINK, '[login link hidden]');
+  out = out.replace(KEY, '[key hidden]');
+  out = out.replace(PASSWORD, (_m, label: string) => `${label}[hidden]`);
+  out = out.replace(ASSIGNED, (_m, label: string) => `${label}[hidden]`);
+  return out;
 }
 
 const MIN_WORDS = 2;
