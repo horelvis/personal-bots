@@ -65,3 +65,8 @@ Route: inline (one behavior; each task builds on the one before).
     - When it matches nothing, nothing is saved and the bot gets the facts the team keeps, to retry with the exact one.
     - When it matches an entry in the bot's own `USER.md` (an unverified note), the new fact is saved and that entry is removed.
   - Checked on a live isolated server: an unmatched correction is refused with the list and changes nothing; a correction copied as "- carol is the user's assistant" replaces "Carol is the user's assistant."; correcting the bot's own "Lives in Paris." saves "Lives in Lisbon." and leaves only "Likes green tea." in its file.
+- L10 (2026-11-23) The review's targeted validation of `17d35f8`: approved, acknowledged (lineage `review-d440fe5c33ec50e9`). Non-blocking findings, left as later work:
+  - The fact is not compared with its quote: a real fragment ("can you please") can back an unrelated fact (the known residual risk, for R6); `replaces` can retire any fact of that user.
+  - The source message stored with a fact is not checked for secrets: a card number in the same message as the quoted words is kept in `source_text` and shown on the memory screen.
+  - A quote can start or end inside a word ("art is my" inside "Bart is my"); the card check misses groups split by tabs, newlines, slashes or three spaces; "my password is too long to remember" is refused as a secret; the card scan is not bounded before the 1000-character cut.
+  - A correction leaves the same old text in other bots' own `USER.md` (shown there as "Only <bot>"); a CLI `remember` about "user" returns an error without closing its tool row; the `choice` flag route and the memory wiring have no automated test.
