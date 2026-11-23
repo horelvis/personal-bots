@@ -1,6 +1,6 @@
 // The gate: the only other member of a CLI bot's internal network.
 // - App relay (GATE_APP_PORT): forwards only the MCP and model paths to the app (GATE_APP).
-// - Egress proxy (GATE_PROXY_PORT): HTTP CONNECT and absolute-URI HTTP to public addresses only.
+// - Egress proxy (GATE_PROXY_PORT): HTTP CONNECT and absolute-URI HTTP to public addresses only; nothing when GATE_INTERNET=off.
 // It holds no secrets and never logs request headers.
 import http from 'node:http';
 import net from 'node:net';
@@ -138,7 +138,8 @@ function refuseLog(host, reason) {
 }
 
 /** Resolves host to one public IP, or returns { error }. Never re-resolved afterwards (no DNS rebinding). */
-async function publicTarget(host, portText) {
+async function publicTarget(host, portText, internet = true) {
+  if (!internet) return { error: 'the public internet is off' };
   const port = /^\d{1,5}$/.test(String(portText)) ? Number(portText) : NaN;
   if (!Number.isInteger(port) || port < 1 || port > 65535) return { error: 'bad port' };
   if (!host) return { error: 'no host' };
@@ -202,7 +203,7 @@ function appRelay(app) {
   return server;
 }
 
-function egressProxy() {
+function egressProxy(internet = true) {
   const server = http.createServer(async (req, res) => {
     let url;
     try {
@@ -216,7 +217,7 @@ function egressProxy() {
       return;
     }
     const host = url.hostname.replace(/^\[|\]$/g, '');
-    const t = await publicTarget(host, url.port || '80');
+    const t = await publicTarget(host, url.port || '80', internet);
     if (t.error) {
       refuseLog(host, t.error);
       res.writeHead(403, { 'content-type': 'text/plain' }).end('forbidden\n');
@@ -242,7 +243,7 @@ function egressProxy() {
   server.on('connect', async (req, client, head) => {
     client.on('error', () => client.destroy());
     const hp = splitHostPort(req.url ?? '');
-    const t = hp ? await publicTarget(hp.host, hp.port) : { error: 'bad target' };
+    const t = hp ? await publicTarget(hp.host, hp.port, internet) : { error: 'bad target' };
     if (t.error) {
       refuseLog(hp?.host ?? req.url, t.error);
       client.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
@@ -277,9 +278,9 @@ function listenOn(server, port, host) {
 }
 
 /** Starts both servers. Returns their bound ports and close(). */
-export async function startGate({ app, appPort = 8787, proxyPort = 3128, host = '0.0.0.0' }) {
+export async function startGate({ app, appPort = 8787, proxyPort = 3128, host = '0.0.0.0', internet = true }) {
   const relay = appRelay(app);
-  const proxy = egressProxy();
+  const proxy = egressProxy(internet);
   const sockets = [trackSockets(relay), trackSockets(proxy)];
   const boundApp = await listenOn(relay, appPort, host);
   let boundProxy;
@@ -313,6 +314,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     app,
     appPort: port(process.env.GATE_APP_PORT, 8787),
     proxyPort: port(process.env.GATE_PROXY_PORT, 3128),
+    // CLI_INTERNET=off on the server: only the app and the model, nothing else.
+    internet: process.env.GATE_INTERNET !== 'off',
   });
   process.stderr.write(`gate: app relay on :${gate.appPort} -> ${app}, egress proxy on :${gate.proxyPort}\n`);
   const stop = () => gate.close().then(() => process.exit(0));

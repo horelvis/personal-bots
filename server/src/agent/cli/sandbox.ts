@@ -61,6 +61,7 @@ async function ensureGate(tag: string) {
     '-e', `GATE_APP=host.docker.internal:${env.port}`,
     '-e', `GATE_APP_PORT=${SANDBOX.appPort}`,
     '-e', `GATE_PROXY_PORT=${SANDBOX.proxyPort}`,
+    '-e', `GATE_INTERNET=${env.cliInternet ? 'on' : 'off'}`,
     tag, 'node', '/opt/hq/gate.mjs',
   ];
   const spec = crypto.createHash('sha256').update(args.join('\0')).digest('hex').slice(0, 12);

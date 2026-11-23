@@ -185,6 +185,7 @@ echo 'CLAUDE_CODE_OAUTH_TOKEN=<the token>' >> .env
 - The image (`server/box/cli/`) is built when the server starts or on the first turn, in a minute or two. Until it is ready, Claude Code is not offered for a new bot.
 - The containers reach the server through `host.docker.internal`, so the server must listen on an address the Docker host can reach (it listens on all interfaces by default).
 - On macOS, keep `ENGINES_DIR` inside your home folder (the default is), which Colima and Docker Desktop share with their VM.
+- `CLI_INTERNET=off` leaves the bots with no public internet at all, only the app and the model.
 - A bot's shell commands get no internet unless they use the proxy settings the container gives them; `git`, `npm` and Claude Code's own web tools do.
 
 The keys you need:

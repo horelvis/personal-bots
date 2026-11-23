@@ -129,3 +129,19 @@ test('the gate relays app paths, refuses the rest, and refuses private egress', 
     await new Promise((r) => app.close(r));
   }
 });
+
+// R8.2 "the public internet if allowed": CLI_INTERNET=off reaches the gate as internet: false.
+test('with the public internet off, the gate refuses every egress target but still relays the app', async () => {
+  const app = http.createServer((req, res) => { res.writeHead(200); res.end('app'); });
+  const appPort = await listen(app);
+  const gate = await startGate({ app: `127.0.0.1:${appPort}`, appPort: 0, proxyPort: 0, host: '127.0.0.1', internet: false });
+  try {
+    assert.match(await connect(gate.proxyPort, '8.8.8.8:443'), /^HTTP\/1\.1 403 /);
+    assert.match(await connect(gate.proxyPort, 'example.com:443'), /^HTTP\/1\.1 403 /);
+    assert.equal((await get(gate.proxyPort, 'http://8.8.8.8/')).status, 403);
+    assert.equal((await get(gate.appPort, '/mcp/x')).status, 200);
+  } finally {
+    await gate.close();
+    await new Promise((r) => app.close(r));
+  }
+});

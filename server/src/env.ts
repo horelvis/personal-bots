@@ -61,6 +61,8 @@ export const env = {
    * empty = on this host, as the server's user, as before.
    */
   cliSandbox: process.env.CLI_SANDBOX === 'docker' ? 'docker' as const : '' as const,
+  /** Whether containerized CLI bots reach the public internet (through the gate). CLI_INTERNET=off: only the app and the model. */
+  cliInternet: process.env.CLI_INTERNET !== 'off',
   /** The user's Claude subscription token (`claude setup-token`). In a container's turn it is added by the model proxy, never passed in. */
   claudeOauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '',
   /** Where the model proxy sends a container's model requests. */
