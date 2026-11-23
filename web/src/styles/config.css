@@ -215,3 +215,7 @@
 
 /* knob contrasts with the "on" track (matters for black bots in dark mode) */
 .toggle.is-on .toggle__knob { background: var(--bot-on-action, #FFFFFF); }
+
+.cfg-row--stack { flex-direction: column; align-items: stretch; gap: 10px; }
+.cfg-rules { width: 100%; min-height: 96px; resize: vertical; font: inherit; line-height: 20px; }
+.cfg-row__actions { display: flex; align-items: center; gap: 10px; }

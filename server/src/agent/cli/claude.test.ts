@@ -140,3 +140,10 @@ test('the child gets no secrets of the app, only what the CLI needs', () => {
   assert.equal(env.GOOGLE_CLIENT_SECRET, undefined);
   assert.equal(env.XAI_API_KEY, undefined);
 });
+
+// R6 (S11): every shell command and read goes to the app's check, not only what the CLI deems risky.
+test('the CLI asks the app before every shell command and read', () => {
+  const { args } = claude.command(base);
+  const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
+  assert.deepEqual(settings.permissions.ask.sort(), ['Bash', 'Glob', 'Grep', 'Read']);
+});

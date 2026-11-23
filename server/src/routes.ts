@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { db, now } from './db.js';
+import { setUserRules, userRules } from './trust.js';
 import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
@@ -611,6 +612,15 @@ api.delete('/connections/:provider/:service', async (c) => {
   await disconnectService(c.get('user').id, p.id, service);
   hub.emit(c.get('user').id, { type: 'connections' });
   return c.json({ ok: true });
+});
+
+// The user's rules for the action check (R6). Only the user changes them, here; no bot tool can.
+api.get('/trust-rules', (c) => c.json({ rules: userRules(c.get('user').id) }));
+api.put('/trust-rules', async (c) => {
+  const { rules } = await c.req.json<{ rules?: unknown }>().catch(() => ({ rules: undefined }));
+  if (typeof rules !== 'string') return c.json({ error: 'rules must be text' }, 400);
+  setUserRules(c.get('user').id, rules);
+  return c.json({ rules: userRules(c.get('user').id) });
 });
 
 api.get('/policies', (c) => c.json({ policies: db.prepare('SELECT tool, mode FROM policies WHERE user_id=?').all(c.get('user').id) }));

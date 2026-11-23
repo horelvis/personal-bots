@@ -45,20 +45,29 @@ export function permissionRule(tool: string, input: any): PermissionRule {
     if (typeof shown !== 'string' || !shown.trim()) return { key, title, detail: undefined };
     return shown.length > CARD_DETAIL_LIMIT ? { key, title, tooLong: true } : { key, title, detail: shown };
   };
+  // What a write or edit will put in the file, shown under its path (cut short when long: the card
+  // still names the file, and the check sees the full arguments).
+  const withBody = (r: PermissionRule, body: string): PermissionRule => (r.detail && body ? { ...r, detail: `${r.detail}\n\n${body}` } : r);
+  const preview = (v: unknown, max: number) => {
+    const s = typeof v === 'string' ? v : '';
+    return s.length > max ? `${s.slice(0, max)}…\n(${s.length - max} more characters)` : s;
+  };
   switch (tool) {
     case 'Bash':
       return rule('cli_bash', 'Shell: run a command', input?.command);
     case 'Write':
-      return rule('cli_write', 'Files: write a file', input?.file_path);
+      return withBody(rule('cli_write', 'Files: write a file', input?.file_path), preview(input?.content, 1500));
     case 'Edit':
     case 'MultiEdit':
-    case 'NotebookEdit':
-      return rule('cli_edit', 'Files: edit a file', input?.file_path ?? input?.notebook_path);
+    case 'NotebookEdit': {
+      const r = rule('cli_edit', 'Files: edit a file', input?.file_path ?? input?.notebook_path);
+      const change = typeof input?.old_string === 'string' ? `Replace:\n${preview(input.old_string, 700)}\nWith:\n${preview(input?.new_string, 700)}` : preview(input?.new_source, 1500);
+      return withBody(r, change);
+    }
     case 'Read':
     case 'Glob':
     case 'Grep':
-      // Reading inside its own folder never reaches the prompt; this is a read somewhere else.
-      return rule('cli_read', 'Files: read outside its folder', input?.file_path ?? input?.path ?? input?.pattern);
+      return rule('cli_read', 'Files: read', input?.file_path ?? input?.path ?? input?.pattern);
   }
   return { key: `cli_${tool.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, title: `${tool}: use this tool` };
 }
@@ -72,8 +81,19 @@ export function permissionStep(tool: string, mode: string | undefined): 'allow' 
   // The app's own tools decide for themselves when they run (mcp.ts), with their own cards.
   if (OURS.test(tool)) return 'allow';
   if (mode === 'blocked') return 'deny';
-  if (mode === 'always_allow') return 'allow';
+  // A shell command or a read is never allowed for good with one click: the check decides each one.
+  if (mode === 'always_allow' && alwaysAllowOffered(permissionRule(tool, {}).key)) return 'allow';
   return 'ask';
+}
+
+/** Whether an approval card may offer "Always allow" (not for shell commands or reads, which rules cover). */
+export const alwaysAllowOffered = (key: string) => key !== 'cli_bash' && key !== 'cli_read';
+
+/** What the check is told about a CLI tool: a read, a change, or a shell command that may be either. */
+export function actionKind(tool: string): 'read' | 'change' | 'unknown' {
+  if (tool === 'Bash') return 'unknown';
+  if (tool === 'Read' || tool === 'Glob' || tool === 'Grep') return 'read';
+  return 'change';
 }
 
 /** The reply the CLI expects from its permission tool. */

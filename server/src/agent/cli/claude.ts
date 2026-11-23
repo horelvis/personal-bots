@@ -49,6 +49,9 @@ export const claude: CliAdapter = {
       '--tools', TOOLS.join(','),
       // The app's tools carry their own approvals; reading the web needs none.
       '--allowedTools', ['mcp__hq', 'WebSearch', 'WebFetch'].join(','),
+      // Every shell command and read goes to the app too, not only what the CLI deems risky: the
+      // app's check decides (it lets reads through and asks about what the user's words do not cover).
+      '--settings', JSON.stringify({ permissions: { ask: ['Bash', 'Read', 'Glob', 'Grep'] } }),
       '--append-system-prompt-file', systemFile,
       ...(o.resume ? ['--resume', o.sessionId] : ['--session-id', o.sessionId]),
       ...(o.model ? ['--model', o.model] : []),

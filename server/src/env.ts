@@ -31,6 +31,9 @@ export const env = {
   serverUrl: process.env.SERVER_URL ?? `http://localhost:${process.env.PORT ?? 8787}`,
   xaiKey: req('XAI_API_KEY'),
   xaiModel: process.env.XAI_MODEL ?? 'grok-4.7',
+  /** The model that checks each action against the user's words (R6). xAI's, unless pointed elsewhere (any OpenAI-compatible API). */
+  trustModel: process.env.TRUST_MODEL || process.env.XAI_MODEL || 'grok-4.7',
+  trustModelUrl: (process.env.TRUST_MODEL_URL || 'https://api.x.ai/v1').replace(/\/+$/, ''),
   /** Optional: without it the app runs with connected apps and event routines switched off. */
   composioKey: (process.env.COMPOSIO_API_KEY ?? '').trim(),
   /** Not needed when the screens run in a local container. */

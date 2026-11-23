@@ -147,6 +147,7 @@ export const TOOLS: ToolDef[] = [
     parameters: obj({ name: { type: 'string' }, prompt: { type: 'string' }, schedule: { type: 'string' }, timezone: { type: 'string', description: 'IANA timezone, e.g. America/New_York' } }, ['name', 'prompt', 'schedule']),
     activity: 'working',
     label: 'Setting up a routine',
+    approval: { toolkit: '', title: 'Routines: set up a routine' },
     impl: async (a, ctx) => {
       try { new Cron(a.schedule, { paused: true, timezone: a.timezone || 'UTC' }); } catch (e: any) { return { output: `Invalid schedule: ${e.message}` }; }
       const id = newId('rt');
@@ -172,6 +173,7 @@ export const TOOLS: ToolDef[] = [
     parameters: obj({ name: { type: 'string' }, prompt: { type: 'string' }, trigger_slug: { type: 'string' }, config_json: { type: 'string' } }, ['name', 'prompt', 'trigger_slug']),
     activity: 'working',
     label: 'Setting up a routine',
+    approval: { toolkit: '', title: 'Routines: set up a routine' },
     impl: async (a, ctx) => {
       let config: Record<string, unknown> = {};
       try { config = a.config_json ? JSON.parse(a.config_json) : {}; } catch { return { output: 'config_json must be a JSON object string.' }; }
@@ -199,6 +201,7 @@ export const TOOLS: ToolDef[] = [
     parameters: obj({ enabled: { type: 'boolean' }, times: { type: 'array', items: { type: 'string' } }, timezone: { type: 'string' } }, ['enabled']),
     activity: 'working',
     label: 'Updating check-ins',
+    approval: { toolkit: '', title: 'Routines: change check-ins' },
     impl: async (a, ctx) => {
       try {
         const r = setCheckins(ctx.userId, { enabled: !!a.enabled, times: a.times, timezone: a.timezone });
@@ -222,6 +225,7 @@ export const TOOLS: ToolDef[] = [
     parameters: obj({ routine_id: { type: 'string' }, name: { type: 'string' }, prompt: { type: 'string' }, schedule: { type: 'string' }, timezone: { type: 'string' }, enabled: { type: 'boolean' } }, ['routine_id']),
     activity: 'working',
     label: 'Updating a routine',
+    approval: { toolkit: '', title: 'Routines: change a routine' },
     impl: async (a, ctx) => {
       const cur = db.prepare('SELECT * FROM routines WHERE id=? AND bot_id=?').get(a.routine_id, ctx.botId) as any;
       if (!cur) return { output: 'No such routine.' };
@@ -241,6 +245,7 @@ export const TOOLS: ToolDef[] = [
     parameters: obj({ routine_id: { type: 'string' } }, ['routine_id']),
     activity: 'working',
     label: 'Removing a routine',
+    approval: { toolkit: '', title: 'Routines: remove a routine' },
     impl: async (a, ctx) => {
       unscheduleRoutine(a.routine_id);
       await deleteEventTrigger(a.routine_id);

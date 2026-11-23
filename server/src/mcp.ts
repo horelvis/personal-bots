@@ -1,13 +1,15 @@
 import crypto from 'node:crypto';
 import { Hono } from 'hono';
-import { getBotRow } from './store.js';
+import { appendRow, emitBot, getBotRow } from './store.js';
 import { connectedServices } from './oauth/connections.js';
 import { composioTools } from './composio.js';
 import { mcpToken, primaryBotId } from './engine.js';
 import { askBot, claimToolRow, enqueueBotMessage, markSilent, noteToolOutcome, requestApproval, toolRowByCallId, turnDepth } from './agent/loop.js';
 import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agent/tools.js';
 import { cliAdapter } from './agent/cli/index.js';
-import { CLI_TOOL_DEFS, MEMORY_TOOL, PERMISSION_TOOL, permissionAnswer, permissionRule, permissionStep } from './agent/cli/tools.js';
+import { CLI_TOOL_DEFS, MEMORY_TOOL, PERMISSION_TOOL, actionKind, permissionAnswer, permissionRule, permissionStep } from './agent/cli/tools.js';
+import { checkAction, unattended } from './trust.js';
+import type { TrustAction } from './lib/trust-check.js';
 import { addMemory } from './engine-memory.js';
 import { toolOutput } from './lib/untrusted.js';
 import { db } from './db.js';
@@ -60,6 +62,38 @@ async function listTools(botId: string | null) {
   return [...own, ...apps];
 }
 
+const UNATTENDED = "This needs the user's approval, and this routine runs while nobody is watching, so it was not done. Say in your report what you would have done, so the user can do it or ask for it.";
+
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
+
+/**
+ * The action check (R6) in front of an approval card. The user's own words may cover the action:
+ * then it runs without a card. Otherwise the user gets the card, with the reason; in a routine's
+ * turn, which nobody watches, the action is not done and the user is told in the chat instead.
+ */
+async function gate(
+  who: { userId: string; botId: string; rowSeq: number | null },
+  action: TrustAction,
+  card: { key: string; toolkit?: string; title: string; detail?: string },
+  args: any,
+): Promise<'allow' | 'deny' | 'skip' | 'unattended'> {
+  const { userId, botId, rowSeq } = who;
+  const verdict = await checkAction(userId, botId, action);
+  if (verdict.run) {
+    if (verdict.source !== 'read') noteToolOutcome(botId, rowSeq, { status: 'running', summary: `Your words: “${clip(verdict.because, 80)}”` });
+    return 'allow';
+  }
+  if (unattended(botId)) {
+    noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Needs your approval' });
+    appendRow(botId, 'notice', { type: 'notice', tone: 'info', text: `A routine wanted to ${card.title.split(': ')[1] ?? card.title} and needs your approval, so it was not done.${card.detail ? `\n${clip(card.detail, 600)}` : ''}` });
+    emitBot(botId);
+    return 'unattended';
+  }
+  const detail = [card.detail, `Why you are asked: ${verdict.reason}`].filter(Boolean).join('\n\n');
+  const answer = await requestApproval({ userId, botId }, { ...card, detail }, args, rowSeq);
+  return answer === 'allow' ? 'allow' : answer === 'deny' ? 'deny' : 'skip';
+}
+
 /**
  * A CLI engine asks whether one of its built-in tool calls (a shell command, a file write, a read
  * outside the bot's folder) may go ahead. The user's saved choice decides; without one they get the
@@ -83,9 +117,9 @@ async function answerPermission(userId: string, botId: string, args: any): Promi
       noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Too long to show for approval' });
       return text(permissionAnswer('deny', input, 'This is too long to show the user for approval, so it was not run. Do it in shorter steps (for a long script, write it to a file first, then run the file).'));
     }
-    const answer = await requestApproval({ userId, botId }, rule, input ?? {}, rowSeq);
+    const answer = await gate({ userId, botId, rowSeq }, { tool, title: rule.title, kind: actionKind(tool), args: input ?? {} }, rule, input ?? {});
     if (answer === 'allow') return text(permissionAnswer('allow', input));
-    return text(permissionAnswer('deny', input, answer === 'deny' ? DECLINED : SKIPPED));
+    return text(permissionAnswer('deny', input, answer === 'deny' ? DECLINED : answer === 'unattended' ? UNATTENDED : SKIPPED));
   } catch (e: any) {
     console.error('[mcp] permission check failed', botId, e?.message ?? e);
     return text(permissionAnswer('deny', input, 'The app could not check this action, so it was not allowed.'));
@@ -119,8 +153,8 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
       if (pol.decision === 'ask') {
         // The card must say what will happen. A description that fails falls back to the plain arguments.
         const detail = own.approval.describe ? await Promise.resolve(own.approval.describe(args, ctx)).catch(() => undefined) : undefined;
-        const answer = await requestApproval({ userId, botId }, { ...pol, detail }, args, rowSeq);
-        if (answer !== 'allow') return text(answer === 'deny' ? DECLINED : SKIPPED);
+        const answer = await gate({ userId, botId, rowSeq }, { tool: name, title: pol.title, kind: 'change', args }, { ...pol, detail }, args);
+        if (answer !== 'allow') return text(answer === 'deny' ? DECLINED : answer === 'unattended' ? UNATTENDED : SKIPPED);
       }
     }
     if (name === MEMORY_TOOL && cliAdapter(bot.engine)) {
@@ -144,8 +178,8 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
       return text(DECLINED);
     }
     if (pol.decision === 'ask') {
-      const answer = await requestApproval({ userId, botId }, pol, args, rowSeq);
-      if (answer !== 'allow') return text(answer === 'deny' ? DECLINED : SKIPPED);
+      const answer = await gate({ userId, botId, rowSeq }, { tool: name, title: pol.title, kind: 'change', args }, pol, args);
+      if (answer !== 'allow') return text(answer === 'deny' ? DECLINED : answer === 'unattended' ? UNATTENDED : SKIPPED);
     }
     const r = await runComposioTool(ctx, name, args);
     noteToolOutcome(botId, rowSeq, { status: r.summary === 'failed' ? 'error' : 'done', summary: r.summary === 'failed' ? 'Failed' : undefined });

@@ -69,6 +69,16 @@ A Bot can run on a coding-agent CLI instead of Hermes. Claude Code is supported;
 
 Results of the app's tools that carry content someone else wrote (Gmail searches and reads, Calendar events, X posts, every Composio app's answer, another Bot's reply to `ask_bot`) reach the Bot inside an `<untrusted_tool_result source="...">` block that says it is data, not instructions (`server/src/lib/untrusted.ts`). Text inside cannot close the block early. A tool marks its result with `untrusted` (the source's name); the app's own messages ("Saved", errors, "Not allowed") stay plain. The Bots' instructions say that only the user, outside such blocks, tells them what to do. Not covered: the CLI's own web and file tools, whose results the app never sees.
 
+## The action check
+
+Before an action that changes something, a check in the server decides from the user's own words whether it runs or the user is asked (`server/src/lib/trust-check.ts`, wired in `server/src/trust.ts` and `server/src/mcp.ts`). It sits in front of every approval card: app tools that write (Gmail, Calendar), Composio writes, changes to a Bot's routines and check-ins, and every shell command and file read or write of a CLI Bot (Claude Code is started with a settings rule that sends all of them to the app, not only what it deems risky).
+
+- The check is one call to a model (the app's xAI model; `TRUST_MODEL` and `TRUST_MODEL_URL` can point it at another OpenAI-compatible API). It sees the user's messages of the last day in any of their chats, the user's rules, for a routine's turn that routine's instruction, and the exact action with its arguments. It never sees tool results, pages, emails or files.
+- The model may let an action run only by quoting the user's words; the server runs it only if that quote is really in the message, rule or routine instruction it names. A read runs without a quote; something that changes anything never counts as a read.
+- Otherwise the user gets the approval card, with the reason. If the check fails or takes more than 15 seconds, the user is asked. In a routine's turn, which nobody watches, the action is not done and the chat gets a notice instead.
+- The user's rules are free text in Settings → Permissions; only the user edits them. A rule to ask always wins.
+- Shell commands and reads are never allowed for good: their cards have no "Always allow", and a saved "always" for them no longer applies. A file-write card shows what will be written.
+
 ## Approvals
 
 Approvals happen inside the MCP call, so they work the same for every engine:

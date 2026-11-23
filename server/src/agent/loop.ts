@@ -10,7 +10,7 @@ import { env } from '../env.js';
 import { instructionsFor } from './prompt.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
 import { cliAdapter, runCli, type CliAdapter } from './cli/index.js';
-import { PERMISSION_TOOL, cliActivity } from './cli/tools.js';
+import { PERMISSION_TOOL, alwaysAllowOffered, cliActivity } from './cli/tools.js';
 import { afterAnswer, createAsks, type Answer } from './asks.js';
 import { beginWithRetry, createTurnStore, shareWait } from './turn-store.js';
 
@@ -171,11 +171,16 @@ interface Turn {
   tools: ToolRef[];
   /** What an app tool said about its own call; beats what we would guess from the raw output. */
   outcomes: Map<number, Outcome>;
+  /** Set when a routine started the turn: its instruction. Such a turn runs unattended. */
+  routine?: string;
 }
 
 const turns = new Map<string, Turn>();
 
 export const turnDepth = (botId: string) => turns.get(botId)?.depth ?? 0;
+
+/** The instruction of the routine whose turn is running for this bot, if a routine started it. */
+export const turnRoutine = (botId: string) => turns.get(botId)?.routine;
 
 export function markSilent(botId: string) {
   const t = turns.get(botId);
@@ -314,6 +319,8 @@ export function resolveApproval(userId: string, approvalId: string, decision: 'a
   if (ap.status !== 'pending') return;
   const waiter = waiters.get(approvalId);
   if (!waiter) return expireApproval(approvalId);
+  // Shell commands and reads are never allowed for good (R6): "always" counts as this once.
+  if (decision === 'always' && !alwaysAllowOffered(ap.tool)) decision = 'allow';
   const status = decision === 'deny' ? 'denied' : decision === 'always' ? 'always' : 'allowed';
   db.prepare('UPDATE approvals SET status=?, resolved_at=? WHERE id=?').run(status, now(), approvalId);
   if (decision === 'always') db.prepare("INSERT OR REPLACE INTO policies(user_id,tool,mode) VALUES (?,?,'always_allow')").run(userId, ap.tool);
@@ -410,7 +417,7 @@ async function runTurn(botId: string, trigger: Trigger) {
   const userId: string = bot.user_id;
   const ctrl = new AbortController();
   aborts.set(botId, ctrl);
-  const turn: Turn = { botId, userId, depth: trigger.type === 'bot' ? trigger.depth : 0, silent: false, tools: [], outcomes: new Map() };
+  const turn: Turn = { botId, userId, depth: trigger.type === 'bot' ? trigger.depth : 0, silent: false, tools: [], outcomes: new Map(), ...(trigger.type === 'routine' ? { routine: trigger.prompt } : {}) };
   turns.set(botId, turn);
   setLive(botId, { isRunning: true, activity: { kind: 'thinking', since: now() }, awaiting: null, startedAt: now(), caption: null, steps: 0 });
 

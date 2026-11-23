@@ -46,6 +46,8 @@ R5, R6 and R7 work together: R7 marks what came from outside, R5 and R6 make sur
 
 ## R6. Each action is checked against the user's own words
 
+**Status (2026-11-23).** Built on branch `feat/trust-check`; see `odd/tasks/trust-check.md`. Decisions: the app's xAI model; every CLI shell command and read goes through the check; "Always allow" removed for shell commands and reads.
+
 **Today.** An app tool that writes waits for an approval card unless the user chose "Always allow" for that tool, which then covers every later call of it by every bot (`policyFor`, `server/src/agent/tools.ts:384`; `requestApproval`, `server/src/agent/loop.ts:188`). For CLI bots, whatever the CLI considers safe never reaches the app (K2), and a file-write card shows the path, not the content (K5).
 
 **Requirement.**

@@ -191,13 +191,44 @@ function humanizeTool(slug: string): { app: string; action: string } {
   return { app: cap(parts[0]), action: cap(parts.slice(1).join(' ')) };
 }
 
+function RulesCard() {
+  const [saved, setSaved] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  useEffect(() => { configApi.trustRules().then((r) => { setSaved(r.rules); setDraft(r.rules); }).catch(() => setSaved('')); }, []);
+  const save = () => {
+    setState('saving');
+    configApi.setTrustRules(draft).then((r) => { setSaved(r.rules); setDraft(r.rules); setState('saved'); }).catch(() => setState('error'));
+  };
+  return (
+    <section className="cfg-section">
+      <div className="cfg-card">
+        <div className="cfg-row cfg-row--stack">
+          <div className="cfg-row__text">
+            <div className="cfg-row__title">Your rules</div>
+            <div className="cfg-row__sub">Before a Bot does something that changes anything, the app checks it against what you asked and these rules. Write them in your own words, for example “Always ask before emailing anyone outside my company” or “No need to ask before reading files in a Bot’s own folder”. A rule to ask always wins. Only you can change them.</div>
+          </div>
+          <textarea className="text-input cfg-rules" rows={5} value={draft} disabled={saved === null} onChange={(e) => { setDraft(e.target.value); setState('idle'); }} aria-label="Your rules" placeholder="One rule per line" />
+          <div className="cfg-row__actions">
+            <button type="button" className="cfg-btn" disabled={saved === null || draft === saved || state === 'saving'} onClick={save}>{state === 'saving' ? 'Saving…' : 'Save rules'}</button>
+            {state === 'saved' && <span className="cfg-row__sub">Saved</span>}
+            {state === 'error' && <span className="cfg-row__sub">Couldn’t save. Try again.</span>}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function PermissionsSection() {
   const [policies, setPolicies] = useState<{ tool: string; mode: string }[] | null>(null);
-  const load = useCallback(() => { configApi.policies().then((r) => setPolicies(r.policies)).catch(() => setPolicies([])); }, []);
+  // "Always allow" no longer applies to shell commands and reads (rules cover them), so they are not listed.
+  const load = useCallback(() => { configApi.policies().then((r) => setPolicies(r.policies.filter((p) => p.tool !== 'cli_bash' && p.tool !== 'cli_read'))).catch(() => setPolicies([])); }, []);
   useEffect(() => { load(); }, [load]);
   return (
     <>
-      <PageHead title="Permissions" sub="Actions your Bots can take without asking first. Remove one and they’ll ask again next time." />
+      <PageHead title="Permissions" sub="What your Bots may do without asking first: your rules, and the actions you chose to always allow." />
+      <RulesCard />
       <section className="cfg-section">
         <div className="cfg-card">
           {policies === null ? <div className="cfg-empty cfg-empty--flat">Loading…</div> : policies.length === 0 ? (

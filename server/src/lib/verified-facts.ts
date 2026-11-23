@@ -50,13 +50,13 @@ export function createVerifiedFacts(db: Database.Database) {
    * The user's own words, newest first: their messages in any of their chats or groups, typed or
    * spoken. An option the user picked on a bot's question card is the bot's text, so it is left out.
    */
-  function userMessages(userId: string, limit = MESSAGES): (UserMessage & { botId: string })[] {
+  function userMessages(userId: string, limit = MESSAGES, since = 0): (UserMessage & { botId: string })[] {
     const rows = db.prepare(`
       SELECT r.bot_id, r.generation, r.seq, r.body FROM rows r JOIN bots b ON b.id = r.bot_id
       WHERE b.user_id = ? AND r.kind = 'message' AND json_extract(r.body, '$.role') = 'user'
         AND (json_extract(r.body, '$.from.kind') IS NULL OR json_extract(r.body, '$.from.kind') = 'voice')
-        AND COALESCE(json_extract(r.body, '$.choice'), 0) = 0
-      ORDER BY r.created_at DESC, r.seq DESC LIMIT ?`).all(userId, limit) as any[];
+        AND COALESCE(json_extract(r.body, '$.choice'), 0) = 0 AND r.created_at >= ?
+      ORDER BY r.created_at DESC, r.seq DESC LIMIT ?`).all(userId, since, limit) as any[];
     return rows.map((r) => ({ id: `${r.bot_id}:${r.generation}:${r.seq}`, botId: r.bot_id, text: String(JSON.parse(r.body).text ?? '') }));
   }
 
