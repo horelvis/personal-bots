@@ -5,6 +5,7 @@
 import { Hono } from 'hono';
 import OpenAI from 'openai';
 import { db, now } from './db.js';
+import { recordSpend } from './spend.js';
 import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import type { AuthVars } from './lib/auth.js';
@@ -408,6 +409,7 @@ voiceApi.post('/end', async (c) => {
   const base = error ? `${ended} · ${clip(error, 120)}` : ended;
   const record: VoiceCallRecord = { id: callId, phase: 'ended', durationMs, costUsd, transcript: lines, tasks: call.tasks };
   const row = appendRow(bot.id, 'event', callEvent(base, record));
+  recordSpend({ userId: bot.user_id, botId: bot.id, kind: 'voice', model: 'grok-voice', costUsd });
   emitBot(bot.id);
 
   // Summarise in the background and rewrite the row.

@@ -21,6 +21,25 @@ const ENV_PASS = [
 const resultText = (content: unknown): string =>
   typeof content === 'string' ? content : Array.isArray(content) ? content.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).join('') : '';
 
+const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
+
+/** The usage and cost on a result line, if it has any. */
+function usageOf(line: any): CliEvent[] {
+  const u = line.usage;
+  if (!u || typeof u !== 'object') return [];
+  const models = line.modelUsage && typeof line.modelUsage === 'object' ? Object.keys(line.modelUsage) : [];
+  const cost = typeof line.total_cost_usd === 'number' && Number.isFinite(line.total_cost_usd) ? line.total_cost_usd : null;
+  return [{
+    type: 'usage',
+    model: models.length ? models.join('+') : null,
+    inputTokens: count(u.input_tokens),
+    outputTokens: count(u.output_tokens),
+    cacheRead: count(u.cache_read_input_tokens),
+    cacheWrite: count(u.cache_creation_input_tokens),
+    costUsd: cost,
+  }];
+}
+
 export const claude: CliAdapter = {
   id: 'claude',
   name: 'Claude Code',
@@ -102,9 +121,10 @@ export const claude: CliAdapter = {
       }
 
       case 'result': {
-        if (!line.is_error && line.subtype === 'success') return [{ type: 'done' }];
+        const used = usageOf(line);
+        if (!line.is_error && line.subtype === 'success') return [...used, { type: 'done' }];
         const said = typeof line.result === 'string' && line.result.trim() ? line.result.trim() : String(line.subtype ?? 'the run failed').replace(/_/g, ' ');
-        return [{ type: 'error', message: said.slice(0, 500) }];
+        return [...used, { type: 'error', message: said.slice(0, 500) }];
       }
     }
     return [];

@@ -54,6 +54,8 @@ export type CliEvent =
   | { type: 'tool'; callId: string; name: string; args: any }
   | { type: 'tool-result'; callId: string; text: string; isError: boolean }
   | { type: 'error'; message: string }
+  /** What the turn used, as the CLI reports it at the end (R9). `costUsd` is the CLI's own list-price figure. */
+  | { type: 'usage'; model: string | null; inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number; costUsd: number | null }
   | { type: 'done' };
 
 export interface CliAdapter {

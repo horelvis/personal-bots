@@ -1,4 +1,5 @@
 import { db, now } from '../db.js';
+import { recordSpend } from '../spend.js';
 import { newId } from '../lib/ids.js';
 import { hub } from '../lib/hub.js';
 import { box } from '../box.js';
@@ -67,7 +68,7 @@ function botByName(userId: string, name: string) {
 }
 
 /** Live X research through xAI's search tool. Returns the answer text followed by the posts it cites. */
-async function xSearch(a: any): Promise<string> {
+async function xSearch(a: any, ctx?: { userId: string; botId: string }): Promise<string> {
   const clean = (v: unknown) => (Array.isArray(v) ? v.map((h) => String(h).replace(/^@/, '').trim()).filter(Boolean).slice(0, 10) : []);
   const tool: Record<string, unknown> = { type: 'x_search' };
   const only = clean(a.handles);
@@ -93,6 +94,7 @@ async function xSearch(a: any): Promise<string> {
   });
   if (!res.ok) throw new Error(`X search failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
   const data: any = await res.json();
+  if (ctx) recordSpend({ userId: ctx.userId, botId: ctx.botId, kind: 'search', model: typeof data.model === 'string' ? data.model : env.xaiModel, tokens: data.usage ? { input: Number(data.usage.input_tokens) || 0, output: Number(data.usage.output_tokens) || 0 } : null });
   const parts: string[] = [];
   const links = new Set<string>();
   for (const item of data.output ?? []) {
@@ -137,8 +139,8 @@ export const TOOLS: ToolDef[] = [
     }, ['query']),
     activity: 'searching_web',
     label: 'Searching X',
-    impl: async (a) => {
-      const r = await xSearch(a);
+    impl: async (a, ctx) => {
+      const r = await xSearch(a, ctx);
       return { output: r, summary: 'Searched X', untrusted: 'X (posts by other people)' };
     },
   },

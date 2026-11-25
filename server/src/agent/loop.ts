@@ -2,6 +2,8 @@ import { db, now } from '../db.js';
 import { newId } from '../lib/ids.js';
 import { hub } from '../lib/hub.js';
 import { appendRow, emitBot, getBotRow, getLive, getRow, setLive, updateRow } from '../store.js';
+import { recordSpend } from '../spend.js';
+import type { Tokens } from '../lib/prices.js';
 import type { ActivityKind, MessageBody, ToolCallBody } from '../types.js';
 import { toolkitInfo } from '../composio.js';
 import { screenForWork } from '../computer.js';
@@ -479,6 +481,8 @@ async function runTurn(botId: string, trigger: Trigger) {
   const outputsSeen = new Set<string>();
   let steps = 0;
   let failed = false;
+  // What the engine said the turn used (R9); recorded once the turn ends, also when it failed.
+  let usage: { model: string | null; tokens: Tokens | null; costUsd: number | null } = { model: bot.model || null, tokens: null, costUsd: null };
 
   // A bot on a CLI engine: the same turn, read from a child process instead of a Hermes gateway.
   const cliTurn = async (cli: CliAdapter) => {
@@ -504,6 +508,10 @@ async function runTurn(botId: string, trigger: Trigger) {
       switch (ev.type) {
         case 'session':
           saveCliSession(botId, bot.generation, ev.id);
+          break;
+
+        case 'usage':
+          usage = { model: ev.model ?? bot.model ?? null, tokens: { input: ev.inputTokens, output: ev.outputTokens, cacheRead: ev.cacheRead, cacheWrite: ev.cacheWrite }, costUsd: ev.costUsd };
           break;
 
         case 'delta': {
@@ -627,6 +635,14 @@ async function runTurn(botId: string, trigger: Trigger) {
           break;
         }
 
+        case 'response.completed': {
+          // Hermes reports the turn's tokens, not their price. Its model is often only the requested name.
+          const u = d?.response?.usage;
+          const named = typeof d?.response?.model === 'string' && d.response.model !== 'hermes-agent' ? d.response.model : null;
+          if (u && typeof u === 'object') usage = { model: bot.model || named, tokens: { input: Number(u.input_tokens) || 0, output: Number(u.output_tokens) || 0 }, costUsd: null };
+          break;
+        }
+
         case 'hermes.status': {
           if (typeof d?.text === 'string' && d.text.trim()) caption(d.text.trim().slice(0, 84), true);
           break;
@@ -710,6 +726,7 @@ async function runTurn(botId: string, trigger: Trigger) {
     appendRow(botId, 'notice', { type: 'notice', text: stopped ? 'Stopped.' : `Something went wrong: ${e?.message ?? e}`, tone: stopped ? 'info' : 'error' });
     if (!stopped) console.error('[agent]', botId, e);
   } finally {
+    recordSpend({ userId, botId, kind: 'turn', routineId: trigger.type === 'routine' ? trigger.routineId : null, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd });
     closeMessage();
     for (const ref of turn.tools) {
       if (ref.done) continue;

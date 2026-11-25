@@ -147,3 +147,20 @@ test('the CLI asks the app before every shell command and read', () => {
   const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
   assert.deepEqual(settings.permissions.ask.sort(), ['Bash', 'Glob', 'Grep', 'Read']);
 });
+
+// R9: the result line carries what the turn cost (captured from Claude Code 2.1.325).
+test('the result line reports usage and cost before the turn ends', () => {
+  const line = { type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.0098775,
+    usage: { input_tokens: 1200, cache_creation_input_tokens: 50, cache_read_input_tokens: 300, output_tokens: 400 },
+    modelUsage: { 'claude-sonnet-4-5': { inputTokens: 1200, outputTokens: 400, costUSD: 0.0098775, costBasis: 'list' } } };
+  assert.deepEqual(claude.parse(line), [
+    { type: 'usage', model: 'claude-sonnet-4-5', inputTokens: 1200, outputTokens: 400, cacheRead: 300, cacheWrite: 50, costUsd: 0.0098775 },
+    { type: 'done' },
+  ]);
+  // A failed run still reports what it used.
+  const failed = claude.parse({ ...line, subtype: 'error_during_execution', is_error: true, result: 'boom' });
+  assert.equal(failed[0].type, 'usage');
+  assert.deepEqual(failed[1], { type: 'error', message: 'boom' });
+  // No usage in the line: nothing to report.
+  assert.deepEqual(claude.parse({ type: 'result', subtype: 'success', is_error: false }), [{ type: 'done' }]);
+});

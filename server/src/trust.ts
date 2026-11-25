@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { db } from './db.js';
+import { recordSpend } from './spend.js';
 import { env } from './env.js';
 import { verifiedFacts } from './engine-memory.js';
 import { turnRoutine, turnUnattended } from './agent/loop.js';
@@ -13,14 +14,17 @@ import { trustCheck, type TrustAction, type TrustDecision } from './lib/trust-ch
 
 const client = new OpenAI({ apiKey: env.xaiKey, baseURL: env.trustModelUrl, timeout: 20_000, maxRetries: 0 });
 
-async function askModel(prompt: { system: string; user: string }): Promise<string> {
+/** One check by the model; what it used is recorded against the bot (R9). */
+const askModel = (userId: string, botId: string) => async (prompt: { system: string; user: string }): Promise<string> => {
   const r = await client.chat.completions.create({
     model: env.trustModel,
     temperature: 0,
     messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }],
   });
+  const u = r.usage;
+  recordSpend({ userId, botId, kind: 'check', model: r.model || env.trustModel, tokens: u ? { input: u.prompt_tokens ?? 0, output: u.completion_tokens ?? 0 } : null });
   return r.choices[0]?.message?.content ?? '';
-}
+};
 
 const DAY = 24 * 60 * 60_000;
 const RECENT = 10;
@@ -35,7 +39,7 @@ export function setUserRules(userId: string, text: string) {
 export async function checkAction(userId: string, botId: string, action: TrustAction): Promise<TrustDecision> {
   const messages = verifiedFacts.userMessages(userId, RECENT, Date.now() - DAY).map((m) => m.text);
   const routine = turnRoutine(botId);
-  const decision = await trustCheck(action, { messages, rules: userRules(userId), ...(routine ? { routine } : {}) }, askModel, 15_000);
+  const decision = await trustCheck(action, { messages, rules: userRules(userId), ...(routine ? { routine } : {}) }, askModel(userId, botId), 15_000);
   if (!decision.run) console.log(`[trust] ${botId} ${action.tool}: ask (${decision.reason})`);
   return decision;
 }

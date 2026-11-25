@@ -146,6 +146,28 @@ db.exec(TURN_QUEUE_DDL);
 // Facts about the user that the user's own words back, shared by all of the user's bots (see lib/verified-facts.ts).
 db.exec(USER_FACTS_DDL);
 
+// What the bots' work cost (R9, see spend.ts). cost_usd NULL = unknown.
+db.exec(`
+CREATE TABLE IF NOT EXISTS spending (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  bot_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  routine_id TEXT,
+  model TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cache_read_tokens INTEGER,
+  cache_write_tokens INTEGER,
+  cost_usd REAL,
+  cost_source TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS spending_user_time ON spending(user_id, created_at);
+CREATE INDEX IF NOT EXISTS spending_bot_time ON spending(bot_id, created_at);
+CREATE INDEX IF NOT EXISTS spending_routine_time ON spending(routine_id, created_at);
+`);
+
 function addColumn(table: string, col: string, ddl: string) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (!cols.some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
@@ -163,6 +185,8 @@ addColumn('bots', 'engine_port', 'INTEGER');
 addColumn('bots', 'handback_at', 'INTEGER');
 // The user's rules for the action check (R6), in their own words; only the user edits them, in the app's settings.
 addColumn('users', 'trust_rules', 'TEXT');
+// The user's monthly spending limit in US dollars (R9); NULL = no limit.
+addColumn('users', 'spend_limit_usd', 'REAL');
 // 1 when the routine was set or changed through the action check (R6), so its instruction counts as the
 // user's words in its own turns. Routines from before that stay unauthorized.
 addColumn('routines', 'authorized', 'INTEGER');
