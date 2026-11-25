@@ -88,6 +88,16 @@ Before an action that changes something, a check in the server decides from the 
 - The user's rules are free text in Settings → Permissions; only the user edits them. A rule to ask always wins.
 - Shell commands and reads are never allowed for good: their cards have no "Always allow", and a saved "always" for them no longer applies. A file-write card shows what will be written.
 
+## Telegram
+
+With `TELEGRAM_BOT_TOKEN` set, the server polls one Telegram bot (`getUpdates`, `server/src/telegram/`), so it needs no public address. Only the server that runs the schedulers polls.
+
+- **Linking**: Settings → Telegram gives a one-time code (10 minutes) as a `t.me/<bot>?start=<code>` link. `/start <code>` in a private chat links that Telegram account (`users.telegram_user_id`, `telegram_chat_id`). A Telegram account belongs to one user at most. Any other chat gets a short refusal, and nothing it sends reaches a Bot.
+- **Messages**: a message goes to the main Bot. "Name: …" or "@Name …" goes to that Bot instead. It is appended and queued like a message typed in the app, so it counts as the user's words. The Bot's finished replies, and its error notices for that turn, are sent back, until the turn ends (waiting for an approval does not end it).
+- **Approvals**: every pending approval card of the linked user is sent with Allow and Deny buttons, plus Always allow where the app offers it. The buttons carry the approval id and are answered through `resolveApproval`. That function checks the approval belongs to the user who tapped and answers it only once. When the card is answered anywhere, the Telegram message is edited to show the outcome.
+- **Sign-ins**: connect cards send the user to the app (`APP_URL`); nothing secret is asked for in Telegram. Question cards are sent as text, and answering them there works as in the app. Drafts point to the app.
+- The listener is a tap on the event hub (`hub.tap`), separate from the web's per-user listeners.
+
 ## Spending
 
 What the Bots' work costs is recorded in `spending` (`server/src/spend.ts`). There is one row per turn, per action check, per X search and per voice call, attributed to the user, the Bot and, for a routine's turn, the routine.

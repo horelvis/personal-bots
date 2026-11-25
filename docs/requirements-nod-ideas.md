@@ -150,6 +150,8 @@ R5, R6 and R7 work together: R7 marks what came from outside, R5 and R6 make sur
 
 ## R11. Telegram
 
+**Status (2026-11-25).** Built on branch `feat/telegram`; see `odd/tasks/telegram.md`. Decision: long polling.
+
 **Today.** The user talks to the bots only in the web app (and voice calls).
 
 **Requirement.**

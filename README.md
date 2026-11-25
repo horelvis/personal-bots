@@ -188,6 +188,16 @@ echo 'CLAUDE_CODE_OAUTH_TOKEN=<the token>' >> .env
 - `CLI_INTERNET=off` leaves the bots with no public internet at all, only the app and the model.
 - A bot's shell commands get no internet unless they use the proxy settings the container gives them; `git`, `npm` and Claude Code's own web tools do.
 
+### Telegram
+
+You can talk to your bots from Telegram and answer their approval cards there.
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and put its token in `.env` as `TELEGRAM_BOT_TOKEN`.
+2. Restart the server.
+3. Open Settings → Telegram, press **Link Telegram** and follow the link.
+
+The server polls Telegram, so it needs no public address. Messages go to your main bot; start one with a bot's name and a colon ("Alice: …") to talk to another. Approval cards come with Allow and Deny buttons, and answering in either place answers them once. Signing in to an app still happens in the web app.
+
 ### Evals
 
 `npm run evals` runs a set of scenarios (`evals/scenarios.mjs`) against an isolated server. Each scenario creates a new bot on Claude Code, gives it a mailbox and a calendar, and sends a request as the user. Gmail and Calendar are a stand-in with state (`evals/fake-google.mjs`), so nothing real is read or sent. Then the run checks what the bot sent, created, changed and remembered.

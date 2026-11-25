@@ -122,7 +122,8 @@ function onEvent(userId: string, ev: ServerEvent) {
   if (ev.type === 'live') {
     const r = replying.get(ev.state.botId);
     if (r && ev.state.isRunning) r.started = true;
-    else if (r?.started && !ev.state.isRunning) replying.delete(ev.state.botId);
+    // Waiting for an approval also shows as not running; the turn is over only when nothing waits.
+    else if (r?.started && !ev.state.isRunning && !ev.state.awaiting) replying.delete(ev.state.botId);
     return;
   }
   if (ev.type !== 'rows') return;
@@ -174,14 +175,16 @@ let running = false;
 export async function startTelegram() {
   if (!telegramEnabled() || running) return;
   running = true;
-  try {
-    botUsername = (await tg<{ username: string }>('getMe', {})).username ?? null;
-    console.log(`[telegram] polling as @${botUsername}`);
-  } catch (e: any) {
-    console.error('[telegram] cannot start:', e?.message ?? e);
-    running = false;
-    return;
+  // Telegram may be out of reach when the server starts (no network yet): keep trying, then poll.
+  for (let wait = 5000; !botUsername; wait = Math.min(wait * 2, 5 * 60_000)) {
+    try {
+      botUsername = (await tg<{ username: string }>('getMe', {})).username ?? null;
+    } catch (e: any) {
+      console.error(`[telegram] cannot reach Telegram (${e?.message ?? e}); trying again in ${Math.round(wait / 1000)}s`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
   }
+  console.log(`[telegram] polling as @${botUsername}`);
   hub.tap(onEvent);
   let offset = 0;
   while (running) {
