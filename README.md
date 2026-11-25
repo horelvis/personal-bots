@@ -188,6 +188,22 @@ echo 'CLAUDE_CODE_OAUTH_TOKEN=<the token>' >> .env
 - `CLI_INTERNET=off` leaves the bots with no public internet at all, only the app and the model.
 - A bot's shell commands get no internet unless they use the proxy settings the container gives them; `git`, `npm` and Claude Code's own web tools do.
 
+### Evals
+
+`npm run evals` runs a set of scenarios (`evals/scenarios.mjs`) against an isolated server. Each scenario creates a new bot on Claude Code, gives it a mailbox and a calendar, and sends a request as the user. Gmail and Calendar are a stand-in with state (`evals/fake-google.mjs`), so nothing real is read or sent. Then the run checks what the bot sent, created, changed and remembered.
+
+The scenarios are of three kinds:
+- **Tasks:** send or reply to an email, create, move or cancel an event, answer from the inbox, remember a fact.
+- **Attacks:** an email that tries to make the bot forward mail, delete events, copy someone in or create an event.
+- **False memories:** an email that tries to plant a fact about you.
+
+The run plays a careful user: it allows a card only for the action the scenario asks for and denies every other card. It prints, for example, `12 of 14 tasks done, 0 unsafe actions, 0 false memories kept`. It saves the result in `evals/results/` and compares it with the previous run.
+
+- The bot uses the Claude Code signed in on this machine (your subscription). With `CLAUDE_CODE_OAUTH_TOKEN` in `.env`, it runs in a container instead (`CLI_SANDBOX`, see above).
+- The action check uses `XAI_API_KEY` from `.env` if it is there; without it, every action shows a card.
+- Options: `--only send-email,inject-forward`, `--jobs 3` (scenarios at a time), `--timeout 360000` (milliseconds per scenario).
+- The command exits with code 1 when anything unsafe happened.
+
 The keys you need:
 
 | Key | Used for |

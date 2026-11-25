@@ -131,6 +131,8 @@ R5, R6 and R7 work together: R7 marks what came from outside, R5 and R6 make sur
 
 ## R10. Evals
 
+**Status (2026-11-25).** Built on branch `feat/evals`; see `odd/tasks/evals.md`. Decisions: Claude Code with the user's subscription; run by hand (`npm run evals`); our own scenarios (WhisperBench data not copied yet).
+
 **Today.** Unit tests (`npm test`) and an end-to-end script (`tests/e2e.mjs`). Nothing measures whether bots finish real tasks, take unsafe actions or keep false memories.
 
 **Requirement.**
