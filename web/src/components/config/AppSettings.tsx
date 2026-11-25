@@ -17,6 +17,7 @@ const SECTIONS: { id: AppSection; label: string }[] = [
   { id: 'computer', label: 'Computer' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'spending', label: 'Spending' },
+  { id: 'telegram', label: 'Telegram' },
   { id: 'apps', label: 'Connected apps' },
   { id: 'account', label: 'Account' },
 ];
@@ -50,6 +51,7 @@ export function AppSettings() {
           {section === 'computer' && <ComputerSection />}
           {section === 'permissions' && <PermissionsSection />}
           {section === 'spending' && <SpendingSection />}
+          {section === 'telegram' && <TelegramSection />}
           {section === 'apps' && <AppsSection />}
           {section === 'account' && <AccountSection />}
         </div>
@@ -219,6 +221,47 @@ function RulesCard() {
         </div>
       </div>
     </section>
+  );
+}
+
+/** Link a Telegram account to talk to the Bots there (R11). */
+function TelegramSection() {
+  const [status, setStatus] = useState<{ configured: boolean; botUsername: string | null; linked: boolean } | null>(null);
+  const [link, setLink] = useState<{ code: string; url: string | null } | null>(null);
+  const [error, setError] = useState(false);
+  const load = useCallback(() => { configApi.telegram().then((s) => { setStatus(s); setError(false); }).catch(() => setError(true)); }, []);
+  useEffect(load, [load]);
+  // While a link is open, notice when it was used.
+  useEffect(() => {
+    if (!link || status?.linked) return;
+    const t = window.setInterval(load, 3000);
+    return () => window.clearInterval(t);
+  }, [link, status?.linked, load]);
+  return (
+    <>
+      <PageHead title="Telegram" sub="Talk to your Bots from Telegram and answer their approvals there. Messages go to your main Bot; start one with a Bot’s name and a colon, like “Alice: …”, to talk to another. Sign-ins still happen here in the app." />
+      <section className="cfg-section">
+        <div className="cfg-card">
+          <div className="cfg-row cfg-row--stack">
+            <div className="cfg-row__text">
+              <div className="cfg-row__title">{!status ? (error ? 'Couldn’t load.' : 'Loading…') : !status.configured ? 'Not set up on this server' : status.linked ? `Linked to @${status.botUsername ?? 'your bot'}` : 'Not linked'}</div>
+              <div className="cfg-row__sub">
+                {status && !status.configured && 'Create a bot with @BotFather in Telegram, put its token in the server’s .env as TELEGRAM_BOT_TOKEN, and restart the server.'}
+                {status?.configured && !status.linked && !link && 'Only the Telegram account you link can talk to your Bots there.'}
+                {status?.configured && !status.linked && link && (link.url ? <>Open <a href={link.url} target="_blank" rel="noreferrer">this link</a> in Telegram and press Start. It works once, for 10 minutes.</> : <>Send <code>/start {link.code}</code> to your bot in Telegram. It works once, for 10 minutes.</>)}
+                {status?.linked && 'Your messages there reach your Bots, and their approval cards come to you with buttons.'}
+              </div>
+            </div>
+            {status?.configured && (
+              <div className="cfg-row__actions">
+                {!status.linked && <button type="button" className="cfg-btn" onClick={() => configApi.linkTelegram().then(setLink).catch(() => setError(true))}>{link ? 'New link' : 'Link Telegram'}</button>}
+                {status.linked && <button type="button" className="cfg-btn" onClick={() => configApi.unlinkTelegram().then((s) => { setStatus(s); setLink(null); }).catch(() => setError(true))}>Unlink</button>}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    </>
   );
 }
 

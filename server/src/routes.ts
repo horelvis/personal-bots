@@ -4,6 +4,7 @@ import { streamSSE } from 'hono/streaming';
 import { db, now } from './db.js';
 import { setUserRules, userRules } from './trust.js';
 import { setSpendLimit, spendingReport, spendLimit } from './spend.js';
+import { newLinkCode, telegramEnabled, telegramStatus, unlinkTelegram } from './telegram/bot.js';
 import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
@@ -616,6 +617,14 @@ api.delete('/connections/:provider/:service', async (c) => {
 });
 
 // The user's rules for the action check (R6). Only the user changes them, here; no bot tool can.
+// Telegram (R11): link the user's Telegram account with a one-time code.
+api.get('/telegram', (c) => c.json(telegramStatus(c.get('user').id)));
+api.post('/telegram/link', (c) => {
+  if (!telegramEnabled()) return c.json({ error: 'Telegram is not set up on this server (TELEGRAM_BOT_TOKEN).' }, 400);
+  return c.json(newLinkCode(c.get('user').id));
+});
+api.delete('/telegram', (c) => { unlinkTelegram(c.get('user').id); return c.json(telegramStatus(c.get('user').id)); });
+
 // What the bots' work cost (R9).
 api.get('/spending', (c) => c.json(spendingReport(c.get('user').id, c.req.query('month') ?? undefined)));
 api.put('/spending-limit', async (c) => {

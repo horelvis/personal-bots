@@ -61,6 +61,10 @@ export const env = {
    * empty = on this host, as the server's user, as before.
    */
   cliSandbox: process.env.CLI_SANDBOX === 'docker' ? 'docker' as const : '' as const,
+  /** Telegram (R11): the bot token from @BotFather; empty = Telegram is off. */
+  telegramToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
+  /** Where Telegram's Bot API is (a stand-in in tests). */
+  telegramApiUrl: (process.env.TELEGRAM_API_URL ?? 'https://api.telegram.org').replace(/\/+$/, ''),
   /** Whether containerized CLI bots reach the public internet (through the gate). CLI_INTERNET=off: only the app and the model. */
   cliInternet: process.env.CLI_INTERNET !== 'off',
   /** The user's Claude subscription token (`claude setup-token`). In a container's turn it is added by the model proxy, never passed in. */

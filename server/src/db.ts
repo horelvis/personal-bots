@@ -187,6 +187,13 @@ addColumn('bots', 'handback_at', 'INTEGER');
 addColumn('users', 'trust_rules', 'TEXT');
 // The user's monthly spending limit in US dollars (R9); NULL = no limit.
 addColumn('users', 'spend_limit_usd', 'REAL');
+// Telegram (R11): the one Telegram account linked to the user, codes that link one, and the approval messages sent there.
+addColumn('users', 'telegram_user_id', 'TEXT');
+addColumn('users', 'telegram_chat_id', 'TEXT');
+db.exec(`
+CREATE TABLE IF NOT EXISTS telegram_links (code TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS telegram_cards (approval_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, message_id INTEGER NOT NULL, text TEXT NOT NULL);
+`);
 // 1 when the routine was set or changed through the action check (R6), so its instruction counts as the
 // user's words in its own turns. Routines from before that stay unauthorized.
 addColumn('routines', 'authorized', 'INTEGER');

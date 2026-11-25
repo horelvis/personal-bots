@@ -74,6 +74,9 @@ export const configApi = {
 
   trustRules: () => req<{ rules: string }>('GET', '/trust-rules'),
   setTrustRules: (rules: string) => req<{ rules: string }>('PUT', '/trust-rules', { rules }),
+  telegram: () => req<{ configured: boolean; botUsername: string | null; linked: boolean }>('GET', '/telegram'),
+  linkTelegram: () => req<{ code: string; url: string | null; expiresAt: number }>('POST', '/telegram/link'),
+  unlinkTelegram: () => req<{ configured: boolean; botUsername: string | null; linked: boolean }>('DELETE', '/telegram'),
   spending: (month?: string) => req<SpendingReport>('GET', `/spending${month ? `?month=${encodeURIComponent(month)}` : ''}`),
   setSpendLimit: (limit: number | null) => req<{ limit: number | null }>('PUT', '/spending-limit', { limit }),
   policies: () => req<{ policies: { tool: string; mode: string }[] }>('GET', '/policies'),

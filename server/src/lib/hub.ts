@@ -16,7 +16,18 @@ class Hub {
     };
   }
 
+  private taps = new Set<(userId: string, ev: ServerEvent) => void>();
+
+  /** Every event of every user, for the server's own channels (Telegram). Not counted as a user being online. */
+  tap(fn: (userId: string, ev: ServerEvent) => void): () => void {
+    this.taps.add(fn);
+    return () => { this.taps.delete(fn); };
+  }
+
   emit(userId: string, ev: ServerEvent) {
+    for (const fn of this.taps) {
+      try { fn(userId, ev); } catch { /* a broken tap must not stop the others */ }
+    }
     const set = this.listeners.get(userId);
     if (!set) return;
     for (const fn of set) {

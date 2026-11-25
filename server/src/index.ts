@@ -20,6 +20,7 @@ import { configApi } from './routes-config.js';
 import { startIdleWatcher } from './idle.js';
 import { mcpApi } from './mcp.js';
 import { cliModelApi } from './cli-model.js';
+import { startTelegram } from './telegram/bot.js';
 import { ensureImage, removeStaleTurns } from './agent/cli/sandbox.js';
 import { initEngines } from './engine.js';
 import { TOOLS } from './agent/tools.js';
@@ -62,6 +63,8 @@ const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
     // CLI bots in containers: turn containers left from before the restart are removed, and the image is built ahead of the first turn.
     if (env.cliSandbox === 'docker') void removeStaleTurns().then(() => ensureImage()).catch((e) => console.error('[cli] container setup failed:', e?.message ?? e));
     try { recoverTurns(); } catch (e: any) { console.error('[agent] could not pick up the turns from before the restart:', e?.message ?? e); }
+    // Telegram (R11): one poller per bot token, so only the server that runs the schedulers polls.
+    void startTelegram();
     initRoutines(enqueue);
     void initTriggers(enqueue);
     initProactive(enqueue);
