@@ -111,6 +111,8 @@ R5, R6 and R7 work together: R7 marks what came from outside, R5 and R6 make sur
 
 ## R9. Spending is recorded and capped
 
+**Status (2026-11-25).** Built on branch `feat/spending`; see `odd/tasks/spending.md`. Decisions: US dollars at list price (Claude Code's own figure, otherwise tokens × `lib/prices.ts`, extended with `MODEL_PRICES`), no limit by default.
+
 **Today.** The app estimates what a voice call costs (`server/src/lib/voice-cost.ts`) but records nothing for the bots' turns.
 
 **Requirement.**

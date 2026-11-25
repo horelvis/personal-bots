@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Toolkit } from '@shared/types';
+import type { SpendingReport, Toolkit } from '@shared/types';
 import { BotAvatarFor } from '../../avatar/BotAvatar';
 import { configApi, type ComputerDetails } from '../../lib/configApi';
 import { relativeShort } from '../../lib/time';
@@ -16,6 +16,7 @@ const SECTIONS: { id: AppSection; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'computer', label: 'Computer' },
   { id: 'permissions', label: 'Permissions' },
+  { id: 'spending', label: 'Spending' },
   { id: 'apps', label: 'Connected apps' },
   { id: 'account', label: 'Account' },
 ];
@@ -48,6 +49,7 @@ export function AppSettings() {
           {section === 'general' && <GeneralSection />}
           {section === 'computer' && <ComputerSection />}
           {section === 'permissions' && <PermissionsSection />}
+          {section === 'spending' && <SpendingSection />}
           {section === 'apps' && <AppsSection />}
           {section === 'account' && <AccountSection />}
         </div>
@@ -211,6 +213,104 @@ function RulesCard() {
           <textarea className="text-input cfg-rules" rows={5} value={draft} disabled={saved === null} onChange={(e) => { setDraft(e.target.value); setState('idle'); }} aria-label="Your rules" placeholder="One rule per line" />
           <div className="cfg-row__actions">
             <button type="button" className="cfg-btn" disabled={saved === null || draft === saved || state === 'saving'} onClick={save}>{state === 'saving' ? 'Saving…' : 'Save rules'}</button>
+            {state === 'saved' && <span className="cfg-row__sub">Saved</span>}
+            {state === 'error' && <span className="cfg-row__sub">Couldn’t save. Try again.</span>}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const usd = (n: number) => `US$${n < 0.01 && n > 0 ? n.toFixed(4) : n.toFixed(2)}`;
+const KIND_LABEL: Record<SpendingReport['byKind'][number]['kind'], string> = { turn: 'Bot turns', check: 'Action checks', search: 'X searches', voice: 'Voice calls' };
+const unknownNote = (n: number) => (n ? ` · ${n} without a known cost` : '');
+
+/** This month's spending at list price, per bot and routine, and the monthly limit (R9). */
+function SpendingSection() {
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const [month, setMonth] = useState(thisMonth);
+  const [report, setReport] = useState<SpendingReport | null>(null);
+  const [failed, setFailed] = useState(false);
+  const load = useCallback(() => { configApi.spending(month).then((r) => { setReport(r); setFailed(false); }).catch(() => setFailed(true)); }, [month]);
+  useEffect(load, [load]);
+  const shift = (by: number) => {
+    const [y, m] = month.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1 + by, 1));
+    setMonth(d.toISOString().slice(0, 7));
+  };
+  const label = new Date(`${month}-01T00:00:00Z`).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return (
+    <>
+      <PageHead title="Spending" sub="What the Bots’ work cost, at the models’ list prices. With a subscription you are not billed per call; these figures are what the same use would cost through the API. Months run in UTC." />
+      <section className="cfg-section">
+        <div className="cfg-card">
+          <div className="cfg-row">
+            <button type="button" className="cfg-btn" onClick={() => shift(-1)} aria-label="Previous month">‹</button>
+            <div className="cfg-row__text">
+              <div className="cfg-row__title">{label}: {report ? usd(report.total) : '…'}{report?.limit !== null && report?.limit !== undefined && month === thisMonth ? ` of ${usd(report.limit)}` : ''}</div>
+              <div className="cfg-row__sub">{failed ? 'Couldn’t load the spending.' : report ? `Costs not known count as nothing${unknownNote(report.unknown)}` : 'Loading…'}</div>
+            </div>
+            <button type="button" className="cfg-btn" disabled={month >= thisMonth} onClick={() => shift(1)} aria-label="Next month">›</button>
+          </div>
+        </div>
+      </section>
+      {report && (
+        <>
+          <SpendList title="By Bot" empty="Nothing recorded this month." rows={report.byBot.map((b) => ({ key: b.botId, name: b.name, sub: `${b.turns} turn${b.turns === 1 ? '' : 's'}${unknownNote(b.unknown)}`, cost: b.cost }))} />
+          <SpendList title="By routine" empty="No routine ran this month." rows={report.byRoutine.map((r) => ({ key: r.routineId, name: r.name, sub: `${r.botName ? `${r.botName} · ` : ''}${r.runs} run${r.runs === 1 ? '' : 's'}${unknownNote(r.unknown)}`, cost: r.cost }))} />
+          <SpendList title="By kind" empty="" rows={report.byKind.map((k) => ({ key: k.kind, name: KIND_LABEL[k.kind] ?? k.kind, sub: `${k.count}${unknownNote(k.unknown)}`, cost: k.cost }))} />
+        </>
+      )}
+      <LimitCard limit={report?.limit ?? null} ready={report !== null} onSaved={load} />
+    </>
+  );
+}
+
+function SpendList({ title, empty, rows }: { title: string; empty: string; rows: { key: string; name: string; sub: string; cost: number }[] }) {
+  if (!rows.length && !empty) return null;
+  return (
+    <section className="cfg-section">
+      <div className="cfg-section__label">{title}</div>
+      <div className="cfg-card">
+        {!rows.length && <div className="cfg-row"><div className="cfg-row__sub">{empty}</div></div>}
+        {rows.map((r) => (
+          <div key={r.key} className="cfg-row">
+            <div className="cfg-row__text">
+              <div className="cfg-row__title">{r.name}</div>
+              <div className="cfg-row__sub">{r.sub}</div>
+            </div>
+            <div className="cfg-row__title">{usd(r.cost)}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LimitCard({ limit, ready, onSaved }: { limit: number | null; ready: boolean; onSaved: () => void }) {
+  const [draft, setDraft] = useState('');
+  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  useEffect(() => { setDraft(limit === null ? '' : String(limit)); }, [limit]);
+  const value = draft.trim() === '' ? null : Number(draft);
+  const valid = value === null || (Number.isFinite(value) && value >= 0 && value <= 100000);
+  const save = (v: number | null) => {
+    setState('saving');
+    configApi.setSpendLimit(v).then(() => { setState('saved'); onSaved(); }).catch(() => setState('error'));
+  };
+  return (
+    <section className="cfg-section">
+      <div className="cfg-card">
+        <div className="cfg-row cfg-row--stack">
+          <div className="cfg-row__text">
+            <div className="cfg-row__title">Monthly limit</div>
+            <div className="cfg-row__sub">When this month’s spending reaches it, routines, check-ins and other work nobody is watching stop, and a Bot you write to says so instead of answering. A run that would likely pass it does not start either. Leave it empty for no limit.</div>
+          </div>
+          <input className="text-input" inputMode="decimal" value={draft} disabled={!ready} placeholder="No limit" aria-label="Monthly limit in US dollars" onChange={(e) => { setDraft(e.target.value); setState('idle'); }} />
+          <div className="cfg-row__actions">
+            <button type="button" className="cfg-btn" disabled={!ready || !valid || value === limit || state === 'saving'} onClick={() => save(value)}>{state === 'saving' ? 'Saving…' : 'Save limit'}</button>
+            {limit !== null && <button type="button" className="cfg-btn" disabled={state === 'saving'} onClick={() => save(null)}>Remove limit</button>}
+            {!valid && <span className="cfg-row__sub">Enter an amount in US dollars, from 0 to 100000.</span>}
             {state === 'saved' && <span className="cfg-row__sub">Saved</span>}
             {state === 'error' && <span className="cfg-row__sub">Couldn’t save. Try again.</span>}
           </div>

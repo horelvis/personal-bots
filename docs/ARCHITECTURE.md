@@ -88,6 +88,21 @@ Before an action that changes something, a check in the server decides from the 
 - The user's rules are free text in Settings → Permissions; only the user edits them. A rule to ask always wins.
 - Shell commands and reads are never allowed for good: their cards have no "Always allow", and a saved "always" for them no longer applies. A file-write card shows what will be written.
 
+## Spending
+
+What the Bots' work costs is recorded in `spending` (`server/src/spend.ts`). There is one row per turn, per action check, per X search and per voice call, attributed to the user, the Bot and, for a routine's turn, the routine.
+
+- **Where the cost comes from**:
+  - Claude Code reports its own cost at list price (`total_cost_usd` on its result line).
+  - Hermes reports tokens only (`response.completed`), as do the action check and X search. Their cost is estimated from `lib/prices.ts`: Anthropic's list prices, plus any model in `MODEL_PRICES`.
+  - A voice call's cost is the app's existing estimate.
+  - A model without a known price is recorded as unknown, which counts as zero.
+  - With a subscription sign-in these are what the same use would cost through the API, not a bill.
+- **Limit**: `users.spend_limit_usd`, none by default. Before a turn starts (`runTurn`), the month's known spending (UTC calendar month) is compared with the limit. A turn does not start when spending is at the limit, or when adding the median cost of the last five runs of the same routine (or the same Bot) would take it past the limit.
+  - A chat message gets an answer saying so.
+  - Routines, check-ins and Bot-to-Bot work get a notice in the Bot's chat, at most once an hour for each reason and routine.
+- **Page**: Settings → Spending shows a month's total, per Bot, per routine and per kind, and holds the limit (`GET /api/spending`, `PUT /api/spending-limit`).
+
 ## Approvals
 
 Approvals happen inside the MCP call, so they work the same for every engine:

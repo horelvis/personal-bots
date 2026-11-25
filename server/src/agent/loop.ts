@@ -2,7 +2,7 @@ import { db, now } from '../db.js';
 import { newId } from '../lib/ids.js';
 import { hub } from '../lib/hub.js';
 import { appendRow, emitBot, getBotRow, getLive, getRow, setLive, updateRow } from '../store.js';
-import { recordSpend } from '../spend.js';
+import { mayStart, recordSpend } from '../spend.js';
 import type { Tokens } from '../lib/prices.js';
 import type { ActivityKind, MessageBody, ToolCallBody } from '../types.js';
 import { toolkitInfo } from '../composio.js';
@@ -424,6 +424,15 @@ function authorizedInstruction(routineId: string): string | undefined {
   return r?.authorized ? String(r.prompt) : undefined;
 }
 
+/** Unattended work stopped by the limit is told once an hour for each bot, reason and routine, not on every check-in. */
+const limitToldAt = new Map<string, number>();
+function shouldTellLimit(key: string): boolean {
+  const last = limitToldAt.get(key) ?? 0;
+  if (Date.now() - last < 60 * 60_000) return false;
+  limitToldAt.set(key, Date.now());
+  return true;
+}
+
 async function runTurn(botId: string, trigger: Trigger) {
   const bot = getBotRow(botId);
   if (!bot || bot.kind === 'room') {
@@ -432,6 +441,24 @@ async function runTurn(botId: string, trigger: Trigger) {
     return;
   }
   const userId: string = bot.user_id;
+  // The monthly spending limit (R9): nothing starts at it, nor a run that would clearly pass it.
+  const allowed = mayStart(userId, botId, trigger.type === 'routine' ? trigger.routineId : null);
+  if (!allowed.run) {
+    const money = (n: number) => `US$${n.toFixed(2)}`;
+    const why = allowed.why === 'reached'
+      ? `This month's spending (${money(allowed.spent)}) has reached your limit (${money(allowed.limit!)})`
+      : `This month's spending is ${money(allowed.spent)} of your ${money(allowed.limit!)} limit, and a run like this one would likely pass it`;
+    if (trigger.type === 'user') {
+      appendRow(botId, 'message', { type: 'message', role: 'assistant', text: `${why}, so I did not answer. Raise the limit in Settings → Spending and send your message again.`, streaming: false });
+      db.prepare('UPDATE bots SET unread = unread + 1 WHERE id=?').run(botId);
+    } else if (shouldTellLimit(`${botId}:${allowed.why}:${trigger.type === 'routine' ? trigger.routineId : trigger.type}`)) {
+      appendRow(botId, 'notice', { type: 'notice', text: `${why}, so ${trigger.type === 'routine' ? `the routine "${trigger.name}"` : 'this work'} did not run. Raise the limit in Settings → Spending to let it run again.`, tone: 'warn' });
+    }
+    console.log(`[spend] ${botId}: not started (${allowed.why}, ${allowed.spent.toFixed(4)} of ${allowed.limit})`);
+    if (trigger.type === 'bot' && trigger.askId) asks.settle(trigger.askId, null);
+    emitBot(botId);
+    return;
+  }
   const ctrl = new AbortController();
   aborts.set(botId, ctrl);
   const turn: Turn = { botId, userId, depth: trigger.type === 'bot' ? trigger.depth : 0, silent: false, tools: [], outcomes: new Map(), unattended: trigger.type === 'routine', ...(trigger.type === 'routine' ? { routine: authorizedInstruction(trigger.routineId) } : {}) };

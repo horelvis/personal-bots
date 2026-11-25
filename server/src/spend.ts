@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { db } from './db.js';
 import { estimateCost, type Tokens } from './lib/prices.js';
 import { limitDecision, typicalCost, type LimitDecision } from './lib/spend-limit.js';
+import type { SpendingReport } from './types.js';
 
 /**
  * What the bots' work cost (R9): one row per turn, per action check, per X search and per voice call.
@@ -73,17 +74,6 @@ export function mayStart(userId: string, botId: string, routineId: string | null
     ? db.prepare("SELECT cost_usd FROM spending WHERE kind='turn' AND routine_id=? ORDER BY created_at DESC LIMIT 5").all(routineId)
     : db.prepare("SELECT cost_usd FROM spending WHERE kind='turn' AND bot_id=? ORDER BY created_at DESC LIMIT 5").all(botId)) as { cost_usd: number | null }[];
   return { ...limitDecision({ spent, limit, typical: typicalCost(recent.map((r) => r.cost_usd)) }), spent, limit };
-}
-
-export interface SpendingReport {
-  month: string;
-  total: number;
-  /** Entries whose cost is not known. */
-  unknown: number;
-  limit: number | null;
-  byBot: { botId: string; name: string; cost: number; turns: number; unknown: number }[];
-  byRoutine: { routineId: string; name: string; botName: string; cost: number; runs: number; unknown: number }[];
-  byKind: { kind: SpendKind; cost: number; count: number; unknown: number }[];
 }
 
 export function spendingReport(userId: string, monthName?: string): SpendingReport {

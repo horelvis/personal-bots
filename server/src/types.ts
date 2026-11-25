@@ -259,3 +259,15 @@ export type ServerEvent =
   | { type: 'memories'; botId: string }
   | { type: 'connections' }
   | { type: 'ping' };
+
+/** What the bots' work cost in one month (R9). Costs are US dollars at list price; unknown ones count as zero. */
+export interface SpendingReport {
+  month: string;
+  total: number;
+  /** How many entries have no known cost. */
+  unknown: number;
+  limit: number | null;
+  byBot: { botId: string; name: string; cost: number; turns: number; unknown: number }[];
+  byRoutine: { routineId: string; name: string; botName: string; cost: number; runs: number; unknown: number }[];
+  byKind: { kind: 'turn' | 'check' | 'search' | 'voice'; cost: number; count: number; unknown: number }[];
+}

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { db, now } from './db.js';
 import { setUserRules, userRules } from './trust.js';
+import { setSpendLimit, spendingReport, spendLimit } from './spend.js';
 import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
@@ -615,6 +616,14 @@ api.delete('/connections/:provider/:service', async (c) => {
 });
 
 // The user's rules for the action check (R6). Only the user changes them, here; no bot tool can.
+// What the bots' work cost (R9).
+api.get('/spending', (c) => c.json(spendingReport(c.get('user').id, c.req.query('month') ?? undefined)));
+api.put('/spending-limit', async (c) => {
+  const { limit } = await c.req.json<{ limit?: unknown }>().catch(() => ({ limit: undefined }));
+  if (limit !== null && (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 0 || limit > 100000)) return c.json({ error: 'limit must be a number of US dollars from 0 to 100000, or null for no limit' }, 400);
+  setSpendLimit(c.get('user').id, limit === null ? null : Math.round(limit * 100) / 100);
+  return c.json({ limit: spendLimit(c.get('user').id) });
+});
 api.get('/trust-rules', (c) => c.json({ rules: userRules(c.get('user').id) }));
 api.put('/trust-rules', async (c) => {
   const { rules } = await c.req.json<{ rules?: unknown }>().catch(() => ({ rules: undefined }));

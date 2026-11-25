@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, EngineInfo, LibraryFile, Memory, Routine, Skill, Task, Toolkit } from '@shared/types';
+import type { Bot, ComputerState, EngineInfo, LibraryFile, Memory, Routine, Skill, SpendingReport, Task, Toolkit } from '@shared/types';
 import { ApiError } from './api';
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -74,6 +74,8 @@ export const configApi = {
 
   trustRules: () => req<{ rules: string }>('GET', '/trust-rules'),
   setTrustRules: (rules: string) => req<{ rules: string }>('PUT', '/trust-rules', { rules }),
+  spending: (month?: string) => req<SpendingReport>('GET', `/spending${month ? `?month=${encodeURIComponent(month)}` : ''}`),
+  setSpendLimit: (limit: number | null) => req<{ limit: number | null }>('PUT', '/spending-limit', { limit }),
   policies: () => req<{ policies: { tool: string; mode: string }[] }>('GET', '/policies'),
   deletePolicy: (tool: string) => req<{ ok: true }>('DELETE', `/policies/${encodeURIComponent(tool)}`),
 
