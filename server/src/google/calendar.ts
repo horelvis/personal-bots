@@ -5,7 +5,8 @@
 
 import { safeId } from './gmail.js';
 
-const API = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+/** GOOGLE_API_URL replaces Google's hosts, for the evals' stand-in only (evals/fake-google.mjs). */
+const API = `${process.env.GOOGLE_API_URL ? process.env.GOOGLE_API_URL.replace(/\/+$/, '') : 'https://www.googleapis.com'}/calendar/v3/calendars/primary/events`;
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const DATE_TIME = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(:\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;

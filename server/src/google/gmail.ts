@@ -3,7 +3,8 @@
  * Google take an access token; everything else here is plain data handling.
  */
 
-const API = 'https://gmail.googleapis.com/gmail/v1/users/me';
+/** GOOGLE_API_URL replaces Google's hosts, for the evals' stand-in only (evals/fake-google.mjs). */
+const API = `${process.env.GOOGLE_API_URL ? process.env.GOOGLE_API_URL.replace(/\/+$/, '') : 'https://gmail.googleapis.com'}/gmail/v1/users/me`;
 
 const ADDRESS = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
 
