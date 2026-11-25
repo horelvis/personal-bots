@@ -3,7 +3,7 @@ import { db } from '../db.js';
 import { env } from '../env.js';
 import { hub } from '../lib/hub.js';
 import { appendRow, getBotRow, listBots } from '../store.js';
-import { enqueue, resolveApproval } from '../agent/loop.js';
+import { enqueue, resolveApproval, turnTelegramChat } from '../agent/loop.js';
 import { alwaysAllowOffered } from '../agent/cli/tools.js';
 import type { Row, ServerEvent } from '../types.js';
 import { cardMessage, outcomeText, parseButton, pickBot, type Button } from './route.js';
@@ -60,32 +60,41 @@ const userByTelegram = (telegramUserId: string): { id: string; telegram_chat_id:
   db.prepare('SELECT id, telegram_chat_id FROM users WHERE telegram_user_id=?').get(telegramUserId) as any;
 const chatOf = (userId: string): string | null => (db.prepare('SELECT telegram_chat_id FROM users WHERE id=?').get(userId) as any)?.telegram_chat_id ?? null;
 
-function link(code: string, telegramUserId: string, chatId: string): boolean {
-  const row = db.prepare('SELECT user_id FROM telegram_links WHERE code=? AND expires_at>=?').get(code, Date.now()) as any;
-  if (!row) return false;
+/** Links the account to the user the code belongs to. Never moves an account already linked to someone else. */
+function link(code: string, telegramUserId: string, chatId: string): { ok: true; email: string } | { ok: false; why: 'bad-code' | 'linked-elsewhere' } {
+  const row = db.prepare('SELECT l.user_id, u.email FROM telegram_links l JOIN users u ON u.id=l.user_id WHERE l.code=? AND l.expires_at>=?').get(code, Date.now()) as any;
+  if (!row) return { ok: false, why: 'bad-code' };
+  const current = userByTelegram(telegramUserId);
+  // A code from somebody else must not quietly take this account over (it would send its messages to their bots).
+  if (current && current.id !== row.user_id) return { ok: false, why: 'linked-elsewhere' };
   db.transaction(() => {
     db.prepare('DELETE FROM telegram_links WHERE code=?').run(code);
-    // One account, one user: linking here unlinks it anywhere else.
-    db.prepare('UPDATE users SET telegram_user_id=NULL, telegram_chat_id=NULL WHERE telegram_user_id=?').run(telegramUserId);
     db.prepare('UPDATE users SET telegram_user_id=?, telegram_chat_id=? WHERE id=?').run(telegramUserId, chatId, row.user_id);
   })();
-  return true;
+  return { ok: true, email: String(row.email) };
 }
 
 // ---------- incoming ----------
 
-/** Bots whose replies go back to Telegram: until the turn the message started has ended. */
-const replying = new Map<string, { chatId: string; started: boolean }>();
+/** Rows already sent, so a rewritten row is not sent twice. Kept small: old keys are dropped. */
 const forwarded = new Set<string>();
+function once(key: string): boolean {
+  if (forwarded.has(key)) return false;
+  forwarded.add(key);
+  if (forwarded.size > 5000) for (const k of [...forwarded].slice(0, 1000)) forwarded.delete(k);
+  return true;
+}
 
 async function onMessage(m: any) {
   const chatId = String(m.chat?.id ?? '');
   const from = String(m.from?.id ?? '');
   const text = typeof m.text === 'string' ? m.text : '';
   if (!chatId || !from || m.chat?.type !== 'private') return;
-  const start = /^\/start(?:@\S+)?(?:\s+(\S+))?/.exec(text);
+  const start = /^\/start(?:@\S+)?(?=\s|$)(?:\s+(\S+))?/.exec(text);
   if (start) {
-    if (start[1] && link(start[1], from, chatId)) return say(chatId, 'Linked. Write here to talk to your main Bot, or start with "Name:" to talk to another one.');
+    const linked = start[1] ? link(start[1], from, chatId) : null;
+    if (linked?.ok) return say(chatId, `Linked to ${linked.email}. Write here to talk to your main Bot, or start with "Name:" to talk to another one. If that is not your account, unlink it in the app.`);
+    if (linked && linked.why === 'linked-elsewhere') return say(chatId, 'This Telegram account is already linked to another user of this app. Unlink it there first (Settings → Telegram).');
     if (!userByTelegram(from)) return say(chatId, 'This bot is private. To use it, open Settings → Telegram in the app and follow the link there.');
     return say(chatId, 'You are linked. Write here to talk to your main Bot, or start with "Name:" to talk to another one.');
   }
@@ -97,8 +106,8 @@ async function onMessage(m: any) {
   if (!picked) return say(chatId, 'You have no Bots yet. Create one in the app.');
   const bot = getBotRow(picked.botId);
   appendRow(bot.id, 'message', { type: 'message', role: 'user', text: picked.text });
-  replying.set(bot.id, { chatId: user.telegram_chat_id ?? chatId, started: false });
-  enqueue(bot.id, { type: 'user', text: picked.text });
+  // The turn carries its chat: only its own replies go back there, not those of turns started in the app.
+  enqueue(bot.id, { type: 'user', text: picked.text, telegramChat: user.telegram_chat_id ?? chatId });
 }
 
 async function onButton(q: any) {
@@ -119,13 +128,6 @@ async function onButton(q: any) {
 // ---------- outgoing: replies and cards ----------
 
 function onEvent(userId: string, ev: ServerEvent) {
-  if (ev.type === 'live') {
-    const r = replying.get(ev.state.botId);
-    if (r && ev.state.isRunning) r.started = true;
-    // Waiting for an approval also shows as not running; the turn is over only when nothing waits.
-    else if (r?.started && !ev.state.isRunning && !ev.state.awaiting) replying.delete(ev.state.botId);
-    return;
-  }
   if (ev.type !== 'rows') return;
   const chatId = chatOf(userId);
   if (!chatId) return;
@@ -135,14 +137,12 @@ function onEvent(userId: string, ev: ServerEvent) {
 async function forward(userId: string, chatId: string, row: Row) {
   const b = row.body;
   const key = `${row.botId}:${row.generation}:${row.seq}`;
-  if (b.type === 'message' && b.role === 'assistant' && !b.streaming && b.text.trim() && replying.has(row.botId)) {
-    if (forwarded.has(key)) return;
-    forwarded.add(key);
-    return void (await send(replying.get(row.botId)!.chatId, `${getBotRow(row.botId)?.name ?? 'Bot'}: ${b.text}`));
+  const turnChat = turnTelegramChat(row.botId);
+  if (turnChat && b.type === 'message' && b.role === 'assistant' && !b.streaming && b.text.trim() && once(key)) {
+    return void (await send(turnChat, `${getBotRow(row.botId)?.name ?? 'Bot'}: ${b.text}`));
   }
-  if (b.type === 'notice' && b.tone === 'error' && replying.has(row.botId) && !forwarded.has(key)) {
-    forwarded.add(key);
-    return void (await send(chatId, `${getBotRow(row.botId)?.name ?? 'Bot'}: ${b.text}`));
+  if (turnChat && b.type === 'notice' && b.tone === 'error' && once(key)) {
+    return void (await send(turnChat, `${getBotRow(row.botId)?.name ?? 'Bot'}: ${b.text}`));
   }
   if (b.type !== 'card') return;
   const name = getBotRow(row.botId)?.name ?? 'A Bot';
@@ -160,8 +160,7 @@ async function forward(userId: string, chatId: string, row: Row) {
     }
     return;
   }
-  if (forwarded.has(key) || (b as any).status !== 'pending') return;
-  forwarded.add(key);
+  if ((b as any).status !== 'pending' || !once(key)) return;
   // A sign-in needs a secret: it is never asked for here (R11.4).
   if (b.card === 'connect') return void (await send(chatId, `${name} needs ${b.toolkitName} connected: ${b.reason}\nSign in from the app: ${env.appUrl}`));
   if (b.card === 'question') return void (await send(chatId, `${name} asks: ${b.question}${b.options.length ? `\n${b.options.map((o) => `- ${o}`).join('\n')}` : ''}\nReply here with your answer.`));

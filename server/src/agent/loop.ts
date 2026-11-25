@@ -30,7 +30,7 @@ import { beginWithRetry, createTurnStore, shareWait } from './turn-store.js';
  */
 
 export type Trigger =
-  | { type: 'user'; text: string }
+  | { type: 'user'; text: string; /** Telegram (R11): the chat the message came from; this turn's replies go back there. */ telegramChat?: string }
   | { type: 'routine'; routineId: string; name: string; prompt: string }
   | { type: 'bot'; fromBotId: string; fromName: string; text: string; depth: number; /** Set when the sender is waiting for the reply (ask_bot). */ askId?: string }
   | { type: 'system'; text: string };
@@ -424,6 +424,10 @@ function authorizedInstruction(routineId: string): string | undefined {
   return r?.authorized ? String(r.prompt) : undefined;
 }
 
+/** The Telegram chat of the turn each bot is running, when that turn came from Telegram (R11). */
+const telegramChats = new Map<string, string>();
+export const turnTelegramChat = (botId: string): string | null => telegramChats.get(botId) ?? null;
+
 /** Unattended work stopped by the limit is told once an hour for each bot, reason and routine, not on every check-in. */
 const limitToldAt = new Map<string, number>();
 function shouldTellLimit(key: string): boolean {
@@ -441,6 +445,10 @@ async function runTurn(botId: string, trigger: Trigger) {
     return;
   }
   const userId: string = bot.user_id;
+  // Set first, so even the answer about the spending limit goes back to Telegram.
+  const telegramChat = trigger.type === 'user' ? trigger.telegramChat ?? null : null;
+  if (telegramChat) telegramChats.set(botId, telegramChat);
+  else telegramChats.delete(botId);
   // The monthly spending limit (R9): nothing starts at it, nor a run that would clearly pass it.
   const allowed = mayStart(userId, botId, trigger.type === 'routine' ? trigger.routineId : null);
   if (!allowed.run) {
@@ -456,6 +464,7 @@ async function runTurn(botId: string, trigger: Trigger) {
     }
     console.log(`[spend] ${botId}: not started (${allowed.why}, ${allowed.spent.toFixed(4)} of ${allowed.limit})`);
     if (trigger.type === 'bot' && trigger.askId) asks.settle(trigger.askId, null);
+    if (telegramChats.get(botId) === telegramChat) telegramChats.delete(botId);
     emitBot(botId);
     return;
   }
@@ -780,6 +789,7 @@ async function runTurn(botId: string, trigger: Trigger) {
         console.warn(`[agent] ${botId}: could not pass a late answer on: ${e?.message ?? e}`);
       }
     }
+    if (telegramChat && telegramChats.get(botId) === telegramChat) telegramChats.delete(botId);
     // An approval asked for outside this turn may still be waiting; leave its state alone.
     if (!pendingApprovals(botId).length) setLive(botId, { isRunning: false, activity: null, awaiting: null, startedAt: null, caption: null });
     else setLive(botId, { isRunning: false, caption: null });

@@ -616,7 +616,6 @@ api.delete('/connections/:provider/:service', async (c) => {
   return c.json({ ok: true });
 });
 
-// The user's rules for the action check (R6). Only the user changes them, here; no bot tool can.
 // Telegram (R11): link the user's Telegram account with a one-time code.
 api.get('/telegram', (c) => c.json(telegramStatus(c.get('user').id)));
 api.post('/telegram/link', (c) => {
@@ -633,6 +632,7 @@ api.put('/spending-limit', async (c) => {
   setSpendLimit(c.get('user').id, limit === null ? null : Math.round(limit * 100) / 100);
   return c.json({ limit: spendLimit(c.get('user').id) });
 });
+// The user's rules for the action check (R6). Only the user changes them, here; no bot tool can.
 api.get('/trust-rules', (c) => c.json({ rules: userRules(c.get('user').id) }));
 api.put('/trust-rules', async (c) => {
   const { rules } = await c.req.json<{ rules?: unknown }>().catch(() => ({ rules: undefined }));
