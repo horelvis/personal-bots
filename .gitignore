@@ -16,3 +16,4 @@ docs/SPEC.md
 web/screenshots/
 tests/out/
 evals/results/
+.playwright-mcp/

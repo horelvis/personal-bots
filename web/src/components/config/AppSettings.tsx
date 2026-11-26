@@ -282,7 +282,7 @@ function SpendingSection() {
     const d = new Date(Date.UTC(y, m - 1 + by, 1));
     setMonth(d.toISOString().slice(0, 7));
   };
-  const label = new Date(`${month}-01T00:00:00Z`).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const label = new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
   return (
     <>
       <PageHead title="Spending" sub="What the Bots’ work cost, at the models’ list prices. With a subscription you are not billed per call; these figures are what the same use would cost through the API. Months run in UTC." />

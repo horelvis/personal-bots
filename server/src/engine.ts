@@ -618,5 +618,11 @@ export async function engineInfo(botId: string): Promise<EngineInfo> {
   };
 }
 
+/** The model a Hermes engine uses when the bot names none (its configured default), for the spending record (R9). */
+export async function engineDefaultModel(botId: string, e: { url: string; key: string }): Promise<string | null> {
+  const m = (await modelOptions(botId, e))?.model;
+  return typeof m === 'string' && m.trim() ? m.trim() : null;
+}
+
 /** After a sign-in the provider list changes; drop what we remembered. */
 export function forgetEngineOptions(botId: string) { optionsCache.delete(botId); }

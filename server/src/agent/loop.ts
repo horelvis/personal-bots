@@ -7,7 +7,7 @@ import type { Tokens } from '../lib/prices.js';
 import type { ActivityKind, MessageBody, ToolCallBody } from '../types.js';
 import { toolkitInfo } from '../composio.js';
 import { screenForWork } from '../computer.js';
-import { cliHome, cliSession, engineFor, forgetCliSession, mcpToken, saveCliSession, waitForEngine } from '../engine.js';
+import { cliHome, cliSession, engineDefaultModel, engineFor, forgetCliSession, mcpToken, saveCliSession, waitForEngine } from '../engine.js';
 import { env } from '../env.js';
 import { instructionsFor } from './prompt.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
@@ -621,6 +621,8 @@ async function runTurn(botId: string, trigger: Trigger) {
     // The screen first: the engine's browser and computer tools point at it.
     await screenForWork(userId, botId).catch((e) => console.warn(`[computer] screen not ready for ${botId}: ${e?.message ?? e}`));
     const engine = await engineFor(botId);
+    // Hermes reports tokens but names only the requested model; the engine's default prices the turn when the bot names none.
+    if (!bot.model) usage = { ...usage, model: await engineDefaultModel(botId, engine).catch(() => null) };
     if (ctrl.signal.aborted) throw new Error('interrupted');
 
     let input = triggerText(trigger);
@@ -675,7 +677,7 @@ async function runTurn(botId: string, trigger: Trigger) {
           // Hermes reports the turn's tokens, not their price. Its model is often only the requested name.
           const u = d?.response?.usage;
           const named = typeof d?.response?.model === 'string' && d.response.model !== 'hermes-agent' ? d.response.model : null;
-          if (u && typeof u === 'object') usage = { model: bot.model || named, tokens: { input: Number(u.input_tokens) || 0, output: Number(u.output_tokens) || 0 }, costUsd: null };
+          if (u && typeof u === 'object') usage = { model: bot.model || named || usage.model, tokens: { input: Number(u.input_tokens) || 0, output: Number(u.output_tokens) || 0 }, costUsd: null };
           break;
         }
 
