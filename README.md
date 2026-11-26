@@ -1,3 +1,6 @@
+> [!WARNING]
+> **This project is deprecated and no longer maintained (2026-11-26).** [Hermes Agent](https://github.com/NousResearch/hermes-agent) now does what personal-bots was built for: several agents, a screen for each bot, Telegram and other chat apps, routines, and a desktop app. The safety features that were unique here (checking actions against your own words, spending limits, verified memory) can be rebuilt as Hermes plugins. **See [MIGRATING.md](MIGRATING.md).** The code stays here, read-only, under the MIT license.
+
 <p align="center">
   <img src="assets/readme-banner.svg" alt="personal-bots. Your team. Their own computers." width="100%">
 </p>
